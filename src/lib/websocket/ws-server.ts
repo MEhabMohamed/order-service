@@ -19,7 +19,7 @@ export function attachWsServer(httpServer: HttpServer): IOServer {
     const io = new IOServer(httpServer, {
         path: "/ws",
         serveClient: false,
-        pingInterval: toMs(env.ws.heartbeatSec, 's'),
+        pingInterval: toMs.second(env.ws.heartbeatSec),
     });
     io.adapter(createAdapter(redisClient, redisClient.duplicate()));
 

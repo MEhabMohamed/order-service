@@ -2,10 +2,10 @@ import { Request, Response, NextFunction } from "express";
 import { ICacheProvider } from "../../pkg/cache/cache.interface";
 import { container } from "../di/container";
 import { TOKENS } from "../di/tokens";
-import { toSeconds } from "../../pkg/utils/time";
+import { toSec } from "../../pkg/utils/time";
 import { tryGetIdempotentRecord, storeIdempotentRecord, hashParams } from "./idempotency-store";
 
-const TTL = toSeconds(1, "d");
+const TTL = toSec.day(1);
 
 interface IdempotencyOptions {
     strict?: boolean;
@@ -55,7 +55,7 @@ export function idempotency(options: IdempotencyOptions = {}) {
                         bodyHash: dbHash,
                         statusCode: dbRecord.responseCode,
                         body: dbRecord.responseBody
-                    }), TTL).catch(() => {});
+                    }), TTL).catch(() => { });
 
                     return res.status(dbRecord.responseCode).json(dbRecord.responseBody);
                 }
@@ -69,7 +69,7 @@ export function idempotency(options: IdempotencyOptions = {}) {
                     bodyHash: currentHash,
                     statusCode,
                     body
-                }), TTL).catch(() => {});
+                }), TTL).catch(() => { });
 
                 if (region && region !== "all") {
                     storeIdempotentRecord({
@@ -79,7 +79,7 @@ export function idempotency(options: IdempotencyOptions = {}) {
                         requestParams: req.body,
                         responseCode: statusCode,
                         responseBody: body,
-                    }).catch(() => {});
+                    }).catch(() => { });
                 }
 
                 return originalJson(body);

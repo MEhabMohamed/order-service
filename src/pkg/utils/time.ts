@@ -1,16 +1,56 @@
-type TimeUnit = 'd' | 'h' | 'm' | 's';
+type TimeUnit = 'year' | 'month' | 'day' | 'hour' | 'minute' | 'second';
 
 const multipliers: Record<TimeUnit, number> = {
-    s: 1000,
-    m: 60 * 1000,
-    h: 60 * 60 * 1000,
-    d: 24 * 60 * 60 * 1000,
+    second: 1000,
+    minute: 60 * 1000,
+    hour: 60 * 60 * 1000,
+    day: 24 * 60 * 60 * 1000,
+    month: 30 * 24 * 60 * 60 * 1000,
+    year: 365 * 24 * 60 * 60 * 1000,
 };
 
-export function toMs(value: number, unit: TimeUnit): number {
-    return value * multipliers[unit];
+class ToMs {
+    year = (value: number): number => {
+        return value * multipliers.year;
+    };
+    month = (value: number): number => {
+        return value * multipliers.month;
+    };
+    day = (value: number): number => {
+        return value * multipliers.day;
+    };
+    hour = (value: number): number => {
+        return value * multipliers.hour;
+    };
+    minute = (value: number): number => {
+        return value * multipliers.minute;
+    };
+    second = (value: number): number => {
+        return value * multipliers.second;
+    };
 }
 
-export function toSeconds(value: number, unit: TimeUnit): number {
-    return toMs(value, unit) / 1000;
+class ToSec {
+    constructor(private readonly time: ToMs) { }
+    second = (value: number): number => {
+        return this.time.second(value) / 1000;
+    };
+    minute = (value: number): number => {
+        return this.time.minute(value) / 1000;
+    };
+    hour = (value: number): number => {
+        return this.time.hour(value) / 1000;
+    };
+    day = (value: number): number => {
+        return this.time.day(value) / 1000;
+    };
+    month = (value: number): number => {
+        return this.time.month(value) / 1000;
+    };
+    year = (value: number): number => {
+        return this.time.year(value) / 1000;
+    };
 }
+
+export const toMs = new ToMs();
+export const toSec = new ToSec(toMs);
