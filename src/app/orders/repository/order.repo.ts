@@ -82,6 +82,14 @@ export async function findOrderByPublicId(publicId: string, conn: Knex): Promise
     return row ? toEntity(row) : null;
 }
 
+export async function findOrderById(id: number, conn: Knex): Promise<OrderEntity | null> {
+    const row = await conn("orders")
+        .where({ id })
+        .first();
+
+    return row ? toEntity(row) : null;
+}
+
 export async function findOrdersByCustomer(
     customerId: number,
     query: { cursor?: string; limit?: number; year?: number },

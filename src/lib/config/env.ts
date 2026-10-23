@@ -1,9 +1,9 @@
 import path from "path";
-import {config} from "dotenv";
-import {z} from "zod";
+import { config } from "dotenv";
+import { z } from "zod";
 
 // C:\Users\ABDULLAH\Desktop\quickbite\order-service\.env
-config({path: path.resolve(__dirname, "../../../.env")});
+config({ path: path.resolve(__dirname, "../../../.env") });
 
 const baseSchema = z.object({
     PORT: z.string().default("4000"),
@@ -40,6 +40,15 @@ const baseSchema = z.object({
     CORE_INTERNAL_API_KEY: z.string(),
 
     WS_HEARTBEAT_SEC: z.string().default("30"),
+
+    KASHIER_BASE_URL: z.string().default("https://test-api.kashier.io"),
+    KASHIER_MERCHANT_ID: z.string(),
+    KASHIER_API_KEY: z.string(),
+    KASHIER_SECRET_KEY: z.string(),
+    KASHIER_WEBHOOK_SECRET: z.string().optional(),
+    KASHIER_RETURN_URL: z.string().default("https://app.quickbite.io/checkout/return"),
+    KASHIER_FAIL_URL: z.string().default("https://app.quickbite.io/checkout/failed"),
+    PAYMENT_SESSION_TIMEOUT_MIN: z.string().default("15"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -99,7 +108,7 @@ for (const region of regions) {
 export const env = {
     port: Number(parsed.PORT),
     isProduction: parsed.NODE_ENV === "production",
-    cors: {origins: parsed.CORS_ORIGINS.split(",").map((s) => s.trim())},
+    cors: { origins: parsed.CORS_ORIGINS.split(",").map((s) => s.trim()) },
 
     jwt: {
         accessSecret: parsed.ACCESS_SECRET,
@@ -145,5 +154,16 @@ export const env = {
 
     ws: {
         heartbeatSec: Number(parsed.WS_HEARTBEAT_SEC),
+    },
+
+    kashier: {
+        baseUrl: parsed.KASHIER_BASE_URL,
+        merchantId: parsed.KASHIER_MERCHANT_ID,
+        apiKey: parsed.KASHIER_API_KEY,
+        secretKey: parsed.KASHIER_SECRET_KEY,
+        webhookSecret: parsed.KASHIER_WEBHOOK_SECRET || parsed.KASHIER_API_KEY,
+        returnUrl: parsed.KASHIER_RETURN_URL,
+        failUrl: parsed.KASHIER_FAIL_URL,
+        sessionTimeoutMin: Number(parsed.PAYMENT_SESSION_TIMEOUT_MIN),
     },
 };

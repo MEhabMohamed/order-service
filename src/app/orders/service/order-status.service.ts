@@ -1,5 +1,6 @@
 import { OrderStatus } from "../enums";
 import { CancellationWindowExpiredError, InvalidStatusTransitionError, UnauthorizedOrderAccessError } from "../errors";
+import { toMs } from "../../../pkg/utils/time";
 
 export interface ActorContext {
     userId: number;
@@ -30,8 +31,8 @@ export class OrderStatusService {
                 throw new CancellationWindowExpiredError();
             }
             if (createdAt) {
-                const elapsedSec = (Date.now() - createdAt.getTime()) / 1000;
-                if (elapsedSec > 60) {
+                const elapsedMs = Date.now() - createdAt.getTime();
+                if (elapsedMs > toMs.second(60)) {
                     throw new CancellationWindowExpiredError();
                 }
             }

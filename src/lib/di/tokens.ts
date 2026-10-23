@@ -11,5 +11,10 @@ export const TOKENS = {
     OrderService: Symbol.for("OrderService"),
     OrderController: Symbol.for("OrderController"),
     OrderCoreEventsHandler: Symbol.for("OrderCoreEventsHandler"),
+
+    PaymentService: Symbol.for("PaymentService"),
+    PaymentController: Symbol.for("PaymentController"),
+    KashierWebhookService: Symbol.for("KashierWebhookService"),
+    WebhookController: Symbol.for("WebhookController"),
 };
 

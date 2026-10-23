@@ -170,6 +170,24 @@ export class OrderService {
             });
         }
 
+        let paymentInfo: { sessionId: string; redirectUrl: string } | undefined;
+        if (data.paymentMethod === PaymentMethod.ONLINE) {
+            try {
+                if (container.isRegistered(TOKENS.PaymentService)) {
+                    const paymentService = container.resolve<any>(TOKENS.PaymentService);
+                    const session = await paymentService.init(customerId, targetRegion, {
+                        orderId: createdOrder!.publicId,
+                    });
+                    paymentInfo = {
+                        sessionId: String(session.sessionId),
+                        redirectUrl: session.redirectUrl,
+                    };
+                }
+            } catch (err) {
+                // If payment init fails, order remains created in pending_payment and customer can call /payments/init
+            }
+        }
+
         return {
             publicId: createdOrder!.publicId,
             status: createdOrder!.status,
@@ -188,6 +206,7 @@ export class OrderService {
             currency: createdOrder!.currency,
             items: itemSnapshots,
             createdAt: createdOrder!.createdAt!.toISOString(),
+            payment: paymentInfo,
         };
     }
 
