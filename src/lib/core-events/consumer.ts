@@ -9,14 +9,15 @@ import {CoreEventEnvelope, CoreEventHandler} from "./types";
 // Safe to expire: all handlers are idempotent cache invalidations.
 const DEDUPE_TTL_SEC = 24 * 60 * 60;
 
-const handlers = new Map<string, CoreEventHandler>();
+const handlers = new Map<string, CoreEventHandler<any>>();
 
-export function registerHandler(eventType: string, handler: CoreEventHandler) {
+export function registerHandler<T = any>(eventType: string, handler: CoreEventHandler<T>) {
     if (handlers.has(eventType)) {
         throw new Error(`Handler already registered for ${eventType}`);
     }
-    handlers.set(eventType, handler);
+    handlers.set(eventType, handler as CoreEventHandler<any>);
 }
+
 
 export function listRegisteredHandlers(): string[] {
     return Array.from(handlers.keys());

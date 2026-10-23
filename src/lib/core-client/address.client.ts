@@ -1,19 +1,10 @@
 import { coreClient } from "./core-client";
+import { CustomerAddressSnapshot } from "./types";
 
-export interface CustomerAddressSnapshot {
-    id: number;
-    userId: number;
-    lat: number;
-    lng: number;
-    addressText: string;
-    city: string;
-    country: string;
-    building?: string;
-    apartmentNumber?: string;
-    label: string;
-}
+export type { CustomerAddressSnapshot };
 
 export class AddressClient {
+
     async getCustomerAddress(addressId: number): Promise<CustomerAddressSnapshot> {
         const res = await coreClient.request<{ success: boolean; data: CustomerAddressSnapshot }>({
             method: "GET",

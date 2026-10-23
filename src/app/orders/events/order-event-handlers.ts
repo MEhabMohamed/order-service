@@ -1,58 +1,89 @@
+import { inject, injectable } from "tsyringe";
+import type Redis from "ioredis";
+import { TOKENS } from "../../../lib/di/tokens";
+import { ICacheProvider } from "../../../pkg/cache/cache.interface";
+import { Logger } from "../../../lib/logger/logger";
 import { registerHandler } from "../../../lib/core-events/consumer";
-import { redisClient } from "../../../lib/cache/init";
+import { container } from "../../../lib/di/container";
+import {
+    BranchDeactivatedPayload,
+    BranchUpdatedPayload,
+    ProductPriceChangedPayload,
+    ProductStockChangedPayload,
+    RestaurantSuspendedPayload,
+} from "./types";
 
-import { logger } from "../../../lib/logger/logger";
+@injectable()
 
-export function registerOrderCoreEventHandlers(): void {
-    // 1. product.stock.changed
-    registerHandler("product.stock.changed", async (payload: any) => {
-        logger.info("[event-handler] product.stock.changed", payload);
+export class OrderCoreEventsHandler {
+    constructor(
+        @inject(TOKENS.CacheProvider)
+        private readonly cache: ICacheProvider,
+        @inject(TOKENS.RedisClient)
+        private readonly redis: Redis,
+        @inject(TOKENS.Logger)
+        private readonly logger: Logger
+    ) {}
+
+    handleProductStockChanged = async (payload: ProductStockChangedPayload): Promise<void> => {
+        this.logger.info("[event-handler] product.stock.changed", payload as Record<string, unknown>);
         const { branchId, productId } = payload || {};
         if (branchId && productId) {
-            await redisClient.del(`core:product:price:${branchId}:${productId}`).catch(() => {});
-            await redisClient.del(`core:product:stock:${branchId}:${productId}`).catch(() => {});
+            await this.cache.del(`core:product:price:${branchId}:${productId}`).catch(() => {});
+            await this.cache.del(`core:product:stock:${branchId}:${productId}`).catch(() => {});
         }
         if (branchId) {
-            const keys = await redisClient.keys(`restaurant:orders:${branchId}:*`).catch(() => []);
-            if (keys.length > 0) await redisClient.del(...keys).catch(() => {});
+            const keys = await this.redis.keys(`restaurant:orders:${branchId}:*`).catch(() => []);
+            if (keys.length > 0) {
+                await this.redis.del(...keys).catch(() => {});
+            }
         }
-    });
+    };
 
-    // 2. product.price.changed
-    registerHandler("product.price.changed", async (payload: any) => {
-        logger.info("[event-handler] product.price.changed", payload);
+    handleProductPriceChanged = async (payload: ProductPriceChangedPayload): Promise<void> => {
+        this.logger.info("[event-handler] product.price.changed", payload as Record<string, unknown>);
         const { branchId, productId } = payload || {};
         if (branchId && productId) {
-            await redisClient.del(`core:product:price:${branchId}:${productId}`).catch(() => {});
+            await this.cache.del(`core:product:price:${branchId}:${productId}`).catch(() => {});
         }
-    });
+    };
 
-    // 3. branch.updated
-    registerHandler("branch.updated", async (payload: any) => {
-        logger.info("[event-handler] branch.updated", payload);
+    handleBranchUpdated = async (payload: BranchUpdatedPayload): Promise<void> => {
+        this.logger.info("[event-handler] branch.updated", payload as Record<string, unknown>);
         const { branchId } = payload || {};
         if (branchId) {
-            await redisClient.del(`core:branch:${branchId}`).catch(() => {});
-            await redisClient.del(`core:branch:deactivated:${branchId}`).catch(() => {});
+            await this.cache.del(`core:branch:${branchId}`).catch(() => {});
+            await this.cache.del(`core:branch:deactivated:${branchId}`).catch(() => {});
         }
-    });
+    };
 
-    // 4. branch.deactivated
-    registerHandler("branch.deactivated", async (payload: any) => {
-        logger.info("[event-handler] branch.deactivated", payload);
+    handleBranchDeactivated = async (payload: BranchDeactivatedPayload): Promise<void> => {
+        this.logger.info("[event-handler] branch.deactivated", payload as Record<string, unknown>);
         const { branchId } = payload || {};
         if (branchId) {
-            await redisClient.del(`core:branch:${branchId}`).catch(() => {});
-            await redisClient.set(`core:branch:deactivated:${branchId}`, "1", "EX", 86400).catch(() => {});
+            await this.cache.del(`core:branch:${branchId}`).catch(() => {});
+            await this.cache.set(`core:branch:deactivated:${branchId}`, "1", 86400).catch(() => {});
         }
-    });
+    };
 
-    // 5. restaurant.suspended
-    registerHandler("restaurant.suspended", async (payload: any) => {
-        logger.info("[event-handler] restaurant.suspended", payload);
+    handleRestaurantSuspended = async (payload: RestaurantSuspendedPayload): Promise<void> => {
+        this.logger.info("[event-handler] restaurant.suspended", payload as Record<string, unknown>);
         const { restaurantId } = payload || {};
         if (restaurantId) {
-            await redisClient.del(`core:restaurant:${restaurantId}`).catch(() => {});
+            await this.cache.del(`core:restaurant:${restaurantId}`).catch(() => {});
         }
-    });
+    };
+
+    register(): void {
+        registerHandler("product.stock.changed", this.handleProductStockChanged);
+        registerHandler("product.price.changed", this.handleProductPriceChanged);
+        registerHandler("branch.updated", this.handleBranchUpdated);
+        registerHandler("branch.deactivated", this.handleBranchDeactivated);
+        registerHandler("restaurant.suspended", this.handleRestaurantSuspended);
+    }
+}
+
+export function registerOrderCoreEventHandlers(): void {
+    const handler = container.resolve<OrderCoreEventsHandler>(TOKENS.OrderCoreEventsHandler);
+    handler.register();
 }

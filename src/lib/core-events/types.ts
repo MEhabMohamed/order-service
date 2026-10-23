@@ -1,4 +1,4 @@
-export type CoreEventHandler = (payload: unknown) => Promise<void>;
+export type CoreEventHandler<T = any> = (payload: T) => Promise<void>;
 
 export interface CoreEventEnvelope {
     eventId: string;

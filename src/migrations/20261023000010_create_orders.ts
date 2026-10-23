@@ -5,18 +5,23 @@ export async function up(knex: Knex): Promise<void> {
         CREATE SCHEMA IF NOT EXISTS partman;
         CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;
 
+        CREATE SEQUENCE IF NOT EXISTS orders_id_seq AS BIGINT;
+
         CREATE TABLE orders (
-            id              BIGSERIAL,
+            id              BIGINT NOT NULL DEFAULT nextval('orders_id_seq'),
             region          TEXT NOT NULL,
             public_id       UUID NOT NULL,
             country_code    TEXT NOT NULL,
             restaurant_id   BIGINT NOT NULL,
+            restaurant_owner_id BIGINT NOT NULL,
             branch_id       BIGINT NOT NULL,
             customer_id     BIGINT NOT NULL,
             customer_address_id BIGINT NOT NULL,
             delivery_lat    DECIMAL(10,7) NOT NULL,
             delivery_lng    DECIMAL(10,7) NOT NULL,
             delivery_address_text_snapshot TEXT NOT NULL,
+            branch_lat      DECIMAL(10,7) NOT NULL,
+            branch_lng      DECIMAL(10,7) NOT NULL,
             status          TEXT NOT NULL CHECK (status IN (
                                 'pending_payment','placed','accepted','rejected',
                                 'preparing','ready','assigned','picked','delivered','cancelled'
@@ -59,5 +64,6 @@ export async function up(knex: Knex): Promise<void> {
 export async function down(knex: Knex): Promise<void> {
     await knex.raw(`
         DROP TABLE IF EXISTS orders CASCADE;
+        DROP SEQUENCE IF EXISTS orders_id_seq;
     `);
 }

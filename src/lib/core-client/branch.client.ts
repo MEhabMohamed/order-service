@@ -1,33 +1,11 @@
 import { coreClient } from "./core-client";
 import { redisClient } from "../cache/init";
+import { BranchMetadata, BranchProduct } from "./types";
 
-
-export interface BranchMetadata {
-    id: number;
-    region: string;
-    restaurantId: number;
-    restaurantStatus: string;
-    acceptOrders: boolean;
-    isActive: boolean;
-    deliveryFee: number;
-    commissionBps: number;
-    currency: string;
-    lat: number;
-    lng: number;
-    name: string;
-    addressText: string;
-}
-
-export interface BranchProduct {
-    productId: number;
-    name: string;
-    imageUrl?: string | null;
-    price: number;
-    stock: number;
-    isAvailable: boolean;
-}
+export type { BranchMetadata, BranchProduct };
 
 export class BranchClient {
+
     async getBranch(branchId: number): Promise<BranchMetadata> {
         const cacheKey = `core:branch:${branchId}`;
         const cached = await redisClient.get(cacheKey).catch(() => null);
