@@ -49,6 +49,10 @@ const baseSchema = z.object({
     KASHIER_RETURN_URL: z.string().default("https://app.quickbite.io/checkout/return"),
     KASHIER_FAIL_URL: z.string().default("https://app.quickbite.io/checkout/failed"),
     PAYMENT_SESSION_TIMEOUT_MIN: z.string().default("15"),
+
+    ASSIGNMENT_RADIUS_METERS: z.string().default("5000"),
+    PRESENCE_STALE_SEC: z.string().default("90"),
+    MAX_REASSIGNMENT_ATTEMPTS: z.string().default("3"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -165,5 +169,11 @@ export const env = {
         returnUrl: parsed.KASHIER_RETURN_URL,
         failUrl: parsed.KASHIER_FAIL_URL,
         sessionTimeoutMin: Number(parsed.PAYMENT_SESSION_TIMEOUT_MIN),
+    },
+
+    delivery: {
+        assignmentRadiusMeters: Number(parsed.ASSIGNMENT_RADIUS_METERS),
+        presenceStaleSec: Number(parsed.PRESENCE_STALE_SEC),
+        maxReassignmentAttempts: Number(parsed.MAX_REASSIGNMENT_ATTEMPTS),
     },
 };

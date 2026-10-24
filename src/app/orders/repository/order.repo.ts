@@ -215,7 +215,89 @@ export async function setDeliveryAgent(publicId: string, agentId: number, conn: 
         .where({ public_id: publicId })
         .update({
             delivery_agent_id: agentId,
+            status: OrderStatus.ASSIGNED,
             assigned_at: new Date(),
             updated_at: new Date(),
         });
 }
+
+export async function unassignDeliveryAgent(publicId: string, conn: Knex): Promise<void> {
+    await conn("orders")
+        .where({ public_id: publicId })
+        .update({
+            delivery_agent_id: null,
+            status: OrderStatus.READY,
+            updated_at: new Date(),
+        });
+}
+
+export async function findActiveOrderByAgent(agentId: number, conn: Knex): Promise<OrderEntity | null> {
+    const row = await conn("orders")
+        .where({ delivery_agent_id: agentId })
+        .whereIn("status", [OrderStatus.ASSIGNED, OrderStatus.PICKED])
+        .first();
+
+    return row ? toEntity(row) : null;
+}
+
+export async function findOrdersByAgent(
+    agentId: number,
+    query: { status?: OrderStatus; cursor?: string; limit?: number },
+    conn: Knex
+): Promise<{ orders: OrderEntity[]; nextCursor: string | null; hasMore: boolean }> {
+    const limit = Math.min(Math.max(query.limit || 20, 1), 100);
+    let qb = conn("orders")
+        .where({ delivery_agent_id: agentId })
+        .orderBy("assigned_at", "desc")
+        .orderBy("id", "desc")
+        .limit(limit + 1);
+
+    if (query.status) {
+        qb = qb.where({ status: query.status });
+    }
+
+    if (query.cursor) {
+        const decoded = decodeCursor(query.cursor);
+        if (decoded && decoded.createdAt && decoded.id) {
+            qb = qb.where((builder) => {
+                builder
+                    .where("assigned_at", "<", decoded.createdAt)
+                    .orWhere((b2) => {
+                        b2.where("assigned_at", "=", decoded.createdAt).andWhere("id", "<", decoded.id);
+                    });
+            });
+        }
+    }
+
+    const rows = await qb;
+    const hasMore = rows.length > limit;
+    const resultRows = hasMore ? rows.slice(0, limit) : rows;
+
+    const orders = resultRows.map(toEntity);
+    const lastItem = orders[orders.length - 1];
+    const nextCursor = hasMore && lastItem && lastItem.assignedAt && lastItem.id
+        ? encodeCursor({ createdAt: lastItem.assignedAt.toISOString(), id: lastItem.id })
+        : null;
+
+    return { orders, nextCursor, hasMore };
+}
+
+export async function completeOrderSettlement(
+    publicId: string,
+    commission: number,
+    conn: Knex
+): Promise<OrderEntity | null> {
+    const now = new Date();
+    const [row] = await conn("orders")
+        .where({ public_id: publicId })
+        .update({
+            commission,
+            status: OrderStatus.DELIVERED,
+            delivered_at: now,
+            updated_at: now,
+        })
+        .returning("*");
+
+    return row ? toEntity(row) : null;
+}
+

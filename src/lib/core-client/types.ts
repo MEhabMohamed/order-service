@@ -44,3 +44,9 @@ export interface CustomerAddressSnapshot {
     apartmentNumber?: string;
     label: string;
 }
+
+export interface AgentProfile {
+    id: number;
+    name: string;
+    phone?: string;
+}

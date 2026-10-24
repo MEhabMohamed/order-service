@@ -17,6 +17,7 @@ const io = attachWsServer(server);
 container.registerInstance(TOKENS.WsServer, io);
 
 import {registerOrderCoreEventHandlers} from "./app/orders/events/order-event-handlers";
+import {startArchivalWorker} from "./lib/jobs/archival.worker";
 
 registerOrderCoreEventHandlers();
 
@@ -40,11 +41,17 @@ server.listen(env.port, async () => {
         .catch((err) => {
             logger.warn("rabbitmq not reachable at boot — will retry", {err});
         });
+
+    archivalWorker = startArchivalWorker();
 });
 
+let archivalWorker: { stop: () => void } | undefined;
 
 async function shutdown() {
     logger.info("shutdown requested");
+    if (archivalWorker) {
+        archivalWorker.stop();
+    }
     server.close(async () => {
         try {
             await io.close();

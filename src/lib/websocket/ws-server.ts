@@ -40,7 +40,8 @@ export function attachWsServer(httpServer: HttpServer): IOServer {
         socket.emit("hello", { allowedChannels: [...allowed] });
 
         socket.on("subscribe", (channel: string, ack?: (res: unknown) => void) => {
-            if (typeof channel !== "string" || !allowed.has(channel)) {
+            const isAllowed = typeof channel === "string" && (allowed.has(channel) || allowed.has("*"));
+            if (!isAllowed) {
                 ack?.({ ok: false, error: "not permitted" });
                 return;
             }

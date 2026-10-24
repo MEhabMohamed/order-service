@@ -15,6 +15,16 @@ import {PaymentController} from "../../app/payments/controller/payment.controlle
 import {KashierWebhookService} from "../../app/payments/service/kashier-webhook.service";
 import {WebhookController} from "../../app/payments/controller/webhook.controller";
 
+import {DeliveryService} from "../../app/deliveries/service/delivery.service";
+import {AssignmentService} from "../../app/deliveries/service/assignment.service";
+import {DeliveryController} from "../../app/deliveries/controller/delivery.controller";
+
+import {PresenceService} from "../../app/agents/service/presence.service";
+import {AgentService} from "../../app/agents/service/agent.service";
+import {EarningService} from "../../app/agents/service/earning.service";
+import {AgentController} from "../../app/agents/controller/agent.controller";
+import {PresenceController} from "../../app/agents/controller/presence.controller";
+
 // Infrastructure
 container.registerSingleton<Logger>(TOKENS.Logger, Logger);
 container.registerInstance(TOKENS.CacheProvider, cacheProvider);
@@ -33,4 +43,24 @@ container.registerSingleton<PaymentController>(TOKENS.PaymentController, Payment
 container.registerSingleton<KashierWebhookService>(TOKENS.KashierWebhookService, KashierWebhookService);
 container.registerSingleton<WebhookController>(TOKENS.WebhookController, WebhookController);
 
+// Deliveries module
+container.registerSingleton<DeliveryService>(TOKENS.DeliveryService, DeliveryService);
+container.registerSingleton<AssignmentService>(TOKENS.AssignmentService, AssignmentService);
+container.registerSingleton<DeliveryController>(TOKENS.DeliveryController, DeliveryController);
+
+import { FinanceService } from "../../app/restaurant-finance/service/finance.service";
+import { FinanceController } from "../../app/restaurant-finance/controller/finance.controller";
+
+// Agents module
+container.registerSingleton<PresenceService>(TOKENS.PresenceService, PresenceService);
+container.registerSingleton<AgentService>(TOKENS.AgentService, AgentService);
+container.registerSingleton<EarningService>(TOKENS.EarningService, EarningService);
+container.registerSingleton<AgentController>(TOKENS.AgentController, AgentController);
+container.registerSingleton<PresenceController>(TOKENS.PresenceController, PresenceController);
+
+// Restaurant finance module
+container.registerSingleton<FinanceService>(TOKENS.FinanceService, FinanceService);
+container.registerSingleton<FinanceController>(TOKENS.FinanceController, FinanceController);
+
 export {container};
+

@@ -1,6 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import { injectable } from "tsyringe";
-import { db } from "../../../lib/knex/knex";
+import { db, dbArchive } from "../../../lib/knex/knex";
 import { redisClient } from "../../../lib/cache/init";
 
 import { branchClient } from "../../../lib/core-client/branch.client";
@@ -14,11 +13,17 @@ import { BranchNotAcceptingOrdersError, OrderNotFoundError, OutOfStockError, Una
 import { createOrder, findOrderByPublicId, findOrdersByBranch, findOrdersByCustomer, updateOrderStatus } from "../repository/order.repo";
 import { bulkInsertItems, findItemsByOrderIds } from "../repository/order-item.repo";
 import { orderStatusService } from "./order-status.service";
+import { inject, injectable } from "tsyringe";
 import { container } from "../../../lib/di/container";
 import { TOKENS } from "../../../lib/di/tokens";
+import { Logger } from "../../../lib/logger/logger";
 
 @injectable()
 export class OrderService {
+    constructor(
+        @inject(TOKENS.Logger) private readonly logger: Logger
+    ) {}
+
     async placeOrder(
         customerId: number,
         region: string,
@@ -156,7 +161,6 @@ export class OrderService {
             await redisClient.del(...keys).catch(() => {});
         }
 
-        // 7. Emit WS event if socket server available
         if (initialStatus === OrderStatus.PLACED) {
             this.emitWs(`branch:${branch.id}`, "order.created", {
                 publicId: createdOrder!.publicId,
@@ -165,6 +169,15 @@ export class OrderService {
                 currency: createdOrder!.currency,
                 itemsCount: createdItems!.length,
                 restaurant: { id: branch.restaurantId, name: branch.name },
+                branchId: branch.id,
+                createdAt: createdOrder!.createdAt!.toISOString(),
+            });
+
+            this.emitWs(`customer:${customerId}`, "order.created", {
+                publicId: createdOrder!.publicId,
+                status: createdOrder!.status,
+                total: createdOrder!.total,
+                currency: createdOrder!.currency,
                 branchId: branch.id,
                 createdAt: createdOrder!.createdAt!.toISOString(),
             });
@@ -215,8 +228,18 @@ export class OrderService {
         region: string,
         user: { userId: number; role?: string }
     ): Promise<OrderDetailResponseDTO> {
-        const conn = db(region);
-        const order = await findOrderByPublicId(publicId, conn);
+        let conn = db(region);
+        let order = await findOrderByPublicId(publicId, conn);
+
+        if (!order) {
+            // Cold archival fallback
+            const archiveConn = dbArchive(region);
+            order = await findOrderByPublicId(publicId, archiveConn).catch(() => null);
+            if (order) {
+                conn = archiveConn;
+            }
+        }
+
         if (!order) {
             throw new OrderNotFoundError();
         }
@@ -286,8 +309,8 @@ export class OrderService {
         region: string,
         query: { cursor?: string; limit?: number; year?: number }
     ): Promise<{ orders: OrderSummaryResponseDTO[]; nextCursor: string | null; hasMore: boolean }> {
-
-        const conn = db(region);
+        const currentYear = new Date().getUTCFullYear();
+        const conn = query.year && query.year < currentYear ? dbArchive(region) : db(region);
         const { orders, nextCursor, hasMore } = await findOrdersByCustomer(customerId, query, conn);
 
         const summaryDtos: OrderSummaryResponseDTO[] = await Promise.all(
@@ -314,7 +337,9 @@ export class OrderService {
         region: string,
         query: { status?: OrderStatus; from?: string; to?: string; cursor?: string; limit?: number }
     ): Promise<{ orders: OrderSummaryResponseDTO[]; nextCursor: string | null; hasMore: boolean }> {
-        const conn = db(region);
+        const currentYear = new Date().getUTCFullYear();
+        const toYear = query.to ? new Date(query.to).getUTCFullYear() : undefined;
+        const conn = toYear && toYear < currentYear ? dbArchive(region) : db(region);
         const { orders, nextCursor, hasMore } = await findOrdersByBranch(branchId, query, conn);
         const branch = await branchClient.getBranch(branchId).catch(() => null);
 
@@ -423,6 +448,26 @@ export class OrderService {
                 reason,
                 ts: now.toISOString(),
             });
+            if (order.deliveryAgentId) {
+                this.emitWs(`agent:${order.deliveryAgentId}`, "order.cancelled", {
+                    orderId: order.publicId,
+                    reason,
+                    ts: now.toISOString(),
+                });
+            }
+        }
+
+        if (newStatus === OrderStatus.READY) {
+            try {
+                if (container.isRegistered(TOKENS.AssignmentService)) {
+                    const assignmentService = container.resolve<any>(TOKENS.AssignmentService);
+                    assignmentService.tryAssign(order.publicId, region).catch((err: any) => {
+                        this.logger.warn(`Auto-assignment on READY failed: ${err?.message}`);
+                    });
+                }
+            } catch {
+                // non-blocking
+            }
         }
 
         return {
