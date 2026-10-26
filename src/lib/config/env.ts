@@ -36,23 +36,38 @@ const baseSchema = z.object({
     RABBITMQ_CORE_EVENTS_DLQ: z.string().default("order-service.core-events.dlq"),
     RABBITMQ_PREFETCH: z.string().default("32"),
 
+    // Outbound: order.events exchange consumed by analytics-service & friends
+    RABBITMQ_ORDER_EVENTS_EXCHANGE: z.string().default("order.events"),
+    OUTBOUND_EVENTS_DRAIN_TICK_SEC: z.string().default("2"),
+    OUTBOUND_EVENTS_BATCH_SIZE: z.string().default("100"),
+
     CORE_SERVICE_BASE_URL: z.string(),
     CORE_INTERNAL_API_KEY: z.string(),
 
     WS_HEARTBEAT_SEC: z.string().default("30"),
 
     KASHIER_BASE_URL: z.string().default("https://test-api.kashier.io"),
+    KASHIER_FEP_BASE_URL: z.string().default("https://test-fep.kashier.io"),
     KASHIER_MERCHANT_ID: z.string(),
     KASHIER_API_KEY: z.string(),
     KASHIER_SECRET_KEY: z.string(),
-    KASHIER_WEBHOOK_SECRET: z.string().optional(),
+    KASHIER_PAYMENT_TYPE: z.string().default("credit"),
     KASHIER_RETURN_URL: z.string().default("https://app.quickbite.io/checkout/return"),
     KASHIER_FAIL_URL: z.string().default("https://app.quickbite.io/checkout/failed"),
+    KASHIER_WEBHOOK_URL: z.string().default("https://api.quickbite.io/api/payments/webhook"),
     PAYMENT_SESSION_TIMEOUT_MIN: z.string().default("15"),
+    ONLINE_PAYMENT_REGIONS: z.string().default("eg"),
 
+    // Deliveries / agents
+    PRESENCE_STALE_SEC: z.string().default("300"),
+    ASSIGNMENT_TICK_SEC: z.string().default("10"),
     ASSIGNMENT_RADIUS_METERS: z.string().default("5000"),
-    PRESENCE_STALE_SEC: z.string().default("90"),
-    MAX_REASSIGNMENT_ATTEMPTS: z.string().default("3"),
+    ASSIGNMENT_CANDIDATES: z.string().default("5"),
+    ASSIGNMENT_OFFER_TTL_SEC: z.string().default("30"),
+    ASSIGNMENT_CLAIM_TTL_SEC: z.string().default("300"),
+    ASSIGNMENT_MAX_ATTEMPTS: z.string().default("3"),
+    ASSIGNMENT_BATCH: z.string().default("20"),
+    AGENT_EARNING_SHARE_BPS: z.string().default("8000"),
 });
 
 const parsed = baseSchema.parse(process.env);
@@ -151,6 +166,12 @@ export const env = {
         prefetch: Number(parsed.RABBITMQ_PREFETCH),
     },
 
+    outboundEvents: {
+        exchange: parsed.RABBITMQ_ORDER_EVENTS_EXCHANGE,
+        drainTickSec: Number(parsed.OUTBOUND_EVENTS_DRAIN_TICK_SEC),
+        batchSize: Number(parsed.OUTBOUND_EVENTS_BATCH_SIZE),
+    },
+
     core: {
         baseUrl: parsed.CORE_SERVICE_BASE_URL,
         internalApiKey: parsed.CORE_INTERNAL_API_KEY,
@@ -162,18 +183,38 @@ export const env = {
 
     kashier: {
         baseUrl: parsed.KASHIER_BASE_URL,
+        fepBaseUrl: parsed.KASHIER_FEP_BASE_URL,
         merchantId: parsed.KASHIER_MERCHANT_ID,
         apiKey: parsed.KASHIER_API_KEY,
         secretKey: parsed.KASHIER_SECRET_KEY,
-        webhookSecret: parsed.KASHIER_WEBHOOK_SECRET || parsed.KASHIER_API_KEY,
+        paymentType: parsed.KASHIER_PAYMENT_TYPE,
         returnUrl: parsed.KASHIER_RETURN_URL,
         failUrl: parsed.KASHIER_FAIL_URL,
+        webhookUrl: parsed.KASHIER_WEBHOOK_URL,
+        serverWebhookUrl: parsed.KASHIER_WEBHOOK_URL,
+        merchantRedirect: parsed.KASHIER_RETURN_URL,
+        failureRedirectEnabled: !!parsed.KASHIER_FAIL_URL,
+    },
+
+    payments: {
         sessionTimeoutMin: Number(parsed.PAYMENT_SESSION_TIMEOUT_MIN),
+        onlineRegions: new Set(
+            parsed.ONLINE_PAYMENT_REGIONS
+                .split(",")
+                .map((s) => s.trim().toLowerCase())
+                .filter((s) => s.length > 0),
+        ),
     },
 
     delivery: {
-        assignmentRadiusMeters: Number(parsed.ASSIGNMENT_RADIUS_METERS),
         presenceStaleSec: Number(parsed.PRESENCE_STALE_SEC),
-        maxReassignmentAttempts: Number(parsed.MAX_REASSIGNMENT_ATTEMPTS),
+        assignmentTickSec: Number(parsed.ASSIGNMENT_TICK_SEC),
+        radiusMeters: Number(parsed.ASSIGNMENT_RADIUS_METERS),
+        candidates: Number(parsed.ASSIGNMENT_CANDIDATES),
+        offerTtlSec: Number(parsed.ASSIGNMENT_OFFER_TTL_SEC),
+        claimTtlSec: Number(parsed.ASSIGNMENT_CLAIM_TTL_SEC),
+        maxAttempts: Number(parsed.ASSIGNMENT_MAX_ATTEMPTS),
+        batch: Number(parsed.ASSIGNMENT_BATCH),
+        agentEarningShareBps: Number(parsed.AGENT_EARNING_SHARE_BPS),
     },
 };

@@ -1,170 +1,127 @@
-import { env } from "../../../lib/config/env";
-import { AppError } from "../../../lib/error/AppError";
-import { retry } from "../../utils/retry";
-import { toMs } from "../../utils/time";
-import {
-    CreateSessionParams,
-    CreateSessionResult,
-    IPaymentProvider,
-    RefundParams,
-    RefundResult,
-} from "../payment.interface";
-import { verifyWebhookSignature } from "./kashier.signature";
-import {
-    KashierCreateSessionRequestBody,
-    KashierCreateSessionResponse,
-} from "./kashier.types";
+import {retry} from "../../utils/retry";
+import {IPaymentProvider} from "../payment.interface";
+import {CreateSessionInput, CreateSessionResult, VerifyWebhookInput} from "../types";
+import {KashierCreateSessionRequest, KashierCreateSessionResponse} from "./types";
+import {verifyWebhookSignature} from "./kashier.signature";
+import {env} from "../../../lib/config/env";
+
+export interface KashierClientConfig {
+    baseUrl: string;
+    merchantId: string;
+    apiKey: string;          // also doubles as webhook HMAC secret
+    secretKey: string;       // Authorization header value
+    paymentType: string;     // "credit"
+    serverWebhookUrl: string;
+    /** Success redirect URL the customer lands on after a successful payment. */
+    merchantRedirect?: string;
+    /** Whether Kashier should also redirect on failure (vs leaving the customer on Kashier's failure page). */
+    failureRedirectEnabled?: boolean;
+    /** seconds before a session expires; passed as expireAt ISO timestamp */
+    sessionTimeoutSec: number;
+}
 
 export class KashierClient implements IPaymentProvider {
-    private readonly baseUrl: string;
-    private readonly merchantId: string;
-    private readonly apiKey: string;
-    private readonly secretKey: string;
-    private readonly returnUrl: string;
-    private readonly sessionTimeoutMin: number;
+    private readonly cfg: KashierClientConfig;
 
-    constructor() {
-        this.baseUrl = env.kashier.baseUrl.replace(/\/+$/, "");
-        this.merchantId = env.kashier.merchantId;
-        this.apiKey = env.kashier.apiKey;
-        this.secretKey = env.kashier.secretKey;
-        this.returnUrl = env.kashier.returnUrl;
-        this.sessionTimeoutMin = env.kashier.sessionTimeoutMin;
+    constructor(cfg?: KashierClientConfig) {
+        this.cfg = cfg ?? {
+            baseUrl: env.kashier.baseUrl,
+            merchantId: env.kashier.merchantId,
+            apiKey: env.kashier.apiKey,
+            secretKey: env.kashier.secretKey,
+            paymentType: "credit",
+            serverWebhookUrl: env.kashier.serverWebhookUrl,
+            merchantRedirect: env.kashier.merchantRedirect,
+            failureRedirectEnabled: env.kashier.failureRedirectEnabled,
+            sessionTimeoutSec: env.payments.sessionTimeoutMin * 60,
+        };
     }
 
-    async createSession(params: CreateSessionParams): Promise<CreateSessionResult> {
-        const url = `${this.baseUrl}/v3/payment/sessions`;
-        const expireDate = new Date(Date.now() + toMs.minute(this.sessionTimeoutMin));
-        const expireAt = expireDate.toISOString();
+    async createSession(input: CreateSessionInput & { orderPublicId?: string; defaultMethod?: string }): Promise<CreateSessionResult & { sessionId?: string; sessionUrl?: string }> {
+        const expireAt = new Date(Date.now() + this.cfg.sessionTimeoutSec * 1000).toISOString();
+        const amount = typeof input.amount === "number" && input.orderPublicId
+            ? (input.amount / 100).toFixed(2)
+            : input.amount;
 
-        const amountDecimal = (params.amount / 100).toFixed(2);
-
-        const body: KashierCreateSessionRequestBody = {
-            amount: amountDecimal,
-            currency: params.currency,
-            order: params.orderPublicId,
-            merchantId: this.merchantId,
-            merchantRedirect: params.merchantRedirectUrl || this.returnUrl,
-            allowedMethods: params.allowedMethods || "card,wallet",
-            defaultMethod: params.defaultMethod || "card",
-            display: "en",
+        const body: any = {
+            merchantId: this.cfg.merchantId,
+            paymentType: this.cfg.paymentType,
+            amount,
+            currency: input.currency,
+            order: input.merchantOrderId ?? input.orderPublicId ?? "",
             type: "one-time",
+            allowedMethods: input.allowedMethods ?? "card,wallet",
+            enable3DS: true,
+            serverWebhook: this.cfg.serverWebhookUrl,
+            merchantRedirect: this.cfg.merchantRedirect,
+            failureRedirect: this.cfg.failureRedirectEnabled ?? false,
+            description: input.description,
+            interactionSource: "ECOMMERCE",
             expireAt,
-            maxFailureAttempts: 3,
-            description: params.description || `QuickBite Order ${params.orderPublicId}`,
+            customer: {reference: input.customerReference ?? ""},
         };
-
-        if (params.customerEmail || params.customerReference) {
-            body.customer = {
-                email: params.customerEmail,
-                reference: params.customerReference,
-            };
+        if (input.defaultMethod) {
+            body.defaultMethod = input.defaultMethod;
         }
 
-        if (params.serverWebhookUrl) {
-            body.serverWebhook = params.serverWebhookUrl;
-        }
-
-        const res = await retry(
+        const response = await retry(
             async () => {
-                const response = await fetch(url, {
+                const res = await fetch(`${this.cfg.baseUrl}/v3/payment/sessions`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        Authorization: this.secretKey,
-                        apiKey: this.apiKey,
+                        "api-key": this.cfg.apiKey,
+                        "apikey": this.cfg.apiKey,
+                        "Authorization": this.cfg.secretKey,
                     },
                     body: JSON.stringify(body),
                 });
-
-                if (response.status >= 500) {
-                    throw new AppError(`Kashier server error: ${response.statusText}`, 503);
+                if (res.status >= 500) {
+                    throw new Error(`kashier ${res.status}: ${await res.text().catch(() => "")}`);
                 }
-
-                return response;
+                if (!res.ok) {
+                    // Non-retryable upstream error (4xx) — surface verbatim.
+                    const text = await res.text().catch(() => "");
+                    const err = new Error(`kashier ${res.status}: ${text}`);
+                    (err as any).statusCode = res.status;
+                    (err as any).retryable = false;
+                    throw err;
+                }
+                return (await res.json()) as KashierCreateSessionResponse;
             },
             {
                 attempts: 3,
                 initialDelayMs: 200,
-                maxDelayMs: 1000,
-            }
+                maxDelayMs: 1500,
+                isRetryable: (err) => (err as any)?.retryable !== false,
+            },
         );
 
-        const data = (await res.json()) as KashierCreateSessionResponse;
-
-        if (!res.ok) {
-            const errorMsg = (data as any)?.message || (data as any)?.error || res.statusText;
-            throw new AppError(`Kashier session creation failed: ${errorMsg}`, 502);
-        }
-
-        if (!data._id || !data.sessionUrl) {
-            throw new AppError("Kashier returned incomplete session response", 502);
+        if (!response?._id || !response?.sessionUrl) {
+            throw new Error(`kashier: malformed session response: ${JSON.stringify(response)}`);
         }
 
         return {
-            sessionId: data._id,
-            sessionUrl: data.sessionUrl,
-            rawResponse: data,
+            providerSessionId: response._id,
+            redirectUrl: response.sessionUrl,
+            sessionId: response._id,
+            sessionUrl: response.sessionUrl,
+            rawResponse: response,
+            expiresAt: response.expireAt ?? expireAt,
         };
     }
 
-    async refund(params: RefundParams): Promise<RefundResult> {
-        const url = `${this.baseUrl}/v3/payments/refund`;
-        const amountDecimal = (params.amount / 100).toFixed(2);
-
-        const body = {
-            transactionId: params.transactionId,
-            amount: amountDecimal,
-            currency: params.currency,
-            reason: params.reason || "Customer requested refund",
-        };
-
-        const res = await retry(
-            async () => {
-                const response = await fetch(url, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        Authorization: this.secretKey,
-                        apiKey: this.apiKey,
-                    },
-                    body: JSON.stringify(body),
-                });
-
-                if (response.status >= 500) {
-                    throw new AppError(`Kashier refund service error: ${response.statusText}`, 503);
-                }
-
-                return response;
-            },
-            {
-                attempts: 3,
-                initialDelayMs: 200,
-                maxDelayMs: 1000,
-            }
+    verifyWebhook(input: VerifyWebhookInput): boolean {
+        return verifyWebhookSignature(
+            input.payload,
+            input.signatureKeys,
+            this.cfg.apiKey,
+            input.signature,
         );
-
-        const data = await res.json();
-
-        if (!res.ok) {
-            const errorMsg = (data as any)?.message || (data as any)?.error || res.statusText;
-            throw new AppError(`Kashier refund failed: ${errorMsg}`, 502);
-        }
-
-        return {
-            refundId: data?.refundId || data?._id || `ref_${Date.now()}`,
-            status: data?.status || "pending",
-            rawResponse: data,
-        };
     }
 
     verifyWebhookSignature(signature: string, payload: any): boolean {
-        const webhookData = payload?.data;
-        if (!webhookData) {
-            return false;
-        }
-        return verifyWebhookSignature(signature, webhookData, this.apiKey);
+        const data = payload?.data ?? payload;
+        return verifyWebhookSignature(signature, data, this.cfg.apiKey);
     }
 }
-
-export const kashierClient = new KashierClient();

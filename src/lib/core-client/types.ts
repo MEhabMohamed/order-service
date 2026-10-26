@@ -1,19 +1,25 @@
+export interface CoreEnvelope<T> {
+    success: boolean;
+    data: T;
+}
+
 export interface CoreClientRequest {
     method: "GET" | "POST" | "PATCH" | "DELETE";
-    path: string;                       // e.g. "/api/internal/branches/123"
+    path: string;
     body?: unknown;
     correlationId?: string;
     idempotencyKey?: string;
 }
 
-export interface BranchMetadata {
+// ── branch ───────────────────────────────────────────────────────────────
+export interface CoreBranchMetadata {
     id: number;
-    region: string;
     restaurantId: number;
     restaurantOwnerId: number;
     restaurantStatus: string;
-    acceptOrders: boolean;
+    region: string;       // country code
     isActive: boolean;
+    acceptOrders: boolean;
     deliveryFee: number;
     commissionBps: number;
     currency: string;
@@ -23,30 +29,46 @@ export interface BranchMetadata {
     addressText: string;
 }
 
-export interface BranchProduct {
+export interface CoreBranchProduct {
     productId: number;
     name: string;
-    imageUrl?: string | null;
+    imageUrl: string | null;
     price: number;
     stock: number;
     isAvailable: boolean;
 }
 
-export interface CustomerAddressSnapshot {
-    id: number;
-    userId: number;
-    lat: number;
-    lng: number;
-    addressText: string;
-    city: string;
-    country: string;
-    building?: string;
-    apartmentNumber?: string;
-    label: string;
+export interface ReserveStockItem {
+    productId: number;
+    quantity: number;
 }
 
-export interface AgentProfile {
+export interface ReserveStockApplied {
+    productId: number;
+    newStock: number;
+}
+
+export interface ReserveStockResult {
+    ok: true;
+    applied: ReserveStockApplied[];
+}
+
+// ── address ──────────────────────────────────────────────────────────────
+export interface CoreCustomerAddress {
     id: number;
-    name: string;
-    phone?: string;
+    userId: number;
+    label: string;
+    country: string;
+    city: string;
+    street: string;
+    building: string;
+    apartmentNumber: string;
+    lat: number;
+    lng: number;
+}
+
+// ── rbac ─────────────────────────────────────────────────────────────────
+export interface RolePermissionsResponse {
+    role: string;
+    permissions: string[];
 }

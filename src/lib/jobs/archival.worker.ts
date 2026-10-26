@@ -3,6 +3,7 @@ import { redisClient } from "../cache/init";
 import { logger } from "../logger/logger";
 import { env } from "../config/env";
 import { toMs } from "../../pkg/utils/time";
+import { register } from "./job-registry";
 
 export async function runArchival(
     targetRegion?: string
@@ -167,3 +168,15 @@ export function startArchivalWorker(): { stop: () => void } {
         },
     };
 }
+
+export function registerArchivalJobs(): void {
+    register({
+        name: "cold-archival",
+        cron: "0 3 * * *", // 03:00 UTC daily
+        timezone: "UTC",
+        handler: async () => {
+            await runArchival();
+        },
+    });
+}
+

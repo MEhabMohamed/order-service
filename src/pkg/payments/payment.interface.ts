@@ -1,37 +1,15 @@
-export interface CreateSessionParams {
-    orderPublicId: string;
-    amount: number; // minor units (e.g. 10000 = 100.00)
-    currency: string;
-    customerEmail?: string;
-    customerReference?: string;
-    merchantRedirectUrl?: string;
-    serverWebhookUrl?: string;
-    description?: string;
-    allowedMethods?: string;
-    defaultMethod?: string;
-}
+import {
+    CreateSessionInput,
+    CreateSessionResult,
+    VerifyWebhookInput,
+} from "./types";
 
-export interface CreateSessionResult {
-    sessionId: string;
-    sessionUrl: string;
-    rawResponse: any;
-}
-
-export interface RefundParams {
-    transactionId: string;
-    amount: number; // minor units
-    currency: string;
-    reason?: string;
-}
-
-export interface RefundResult {
-    refundId: string;
-    status: string;
-    rawResponse: any;
-}
-
+/**
+ * Provider-agnostic payment interface. Concrete implementations (Kashier,
+ * Stripe, etc.) live under pkg/payments/<provider>/. The pkg/ layer never
+ * imports lib/ or app/ — it stays framework- and DB-free.
+ */
 export interface IPaymentProvider {
-    createSession(params: CreateSessionParams): Promise<CreateSessionResult>;
-    refund(params: RefundParams): Promise<RefundResult>;
-    verifyWebhookSignature(signature: string, payload: any): boolean;
+    createSession(input: CreateSessionInput): Promise<CreateSessionResult>;
+    verifyWebhook(input: VerifyWebhookInput): boolean;
 }

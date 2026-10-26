@@ -1,13 +1,10 @@
 import type { Knex } from "knex";
 
 export async function up(knex: Knex): Promise<void> {
+    await knex.raw(`CREATE SEQUENCE IF NOT EXISTS orders_id_seq AS BIGINT`);
+
     await knex.raw(`
-        CREATE SCHEMA IF NOT EXISTS partman;
-        CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;
-
-        CREATE SEQUENCE IF NOT EXISTS orders_id_seq AS BIGINT;
-
-        CREATE TABLE orders (
+        CREATE TABLE IF NOT EXISTS orders (
             id              BIGINT NOT NULL DEFAULT nextval('orders_id_seq'),
             region          TEXT NOT NULL,
             public_id       UUID NOT NULL,
@@ -45,20 +42,44 @@ export async function up(knex: Knex): Promise<void> {
             cancelled_at    TIMESTAMP NULL,
             PRIMARY KEY (id, created_at)
         ) PARTITION BY RANGE (created_at);
-
-        SELECT partman.create_parent(
-            p_parent_table => 'public.orders',
-            p_control => 'created_at',
-            p_interval => '1 month',
-            p_premake => 4
-        );
-
-        CREATE INDEX idx_orders_public_id ON orders (public_id);
-        CREATE INDEX idx_orders_customer_id_created_at ON orders (customer_id, created_at DESC);
-        CREATE INDEX idx_orders_branch_status_created_at ON orders (branch_id, status, created_at DESC);
-        CREATE INDEX idx_orders_status_created_at ON orders (status, created_at) WHERE status IN ('ready','assigned');
-        CREATE INDEX idx_orders_delivery_agent_id_status ON orders (delivery_agent_id, status) WHERE delivery_agent_id IS NOT NULL;
     `);
+
+    await knex.raw(`ALTER SEQUENCE orders_id_seq OWNED BY orders.id`);
+
+    await knex.raw(`CREATE INDEX IF NOT EXISTS idx_orders_public_id ON orders (public_id)`);
+    await knex.raw(`CREATE INDEX IF NOT EXISTS idx_orders_customer_id_created_at ON orders (customer_id, created_at DESC)`);
+    await knex.raw(`CREATE INDEX IF NOT EXISTS idx_orders_branch_status_created_at ON orders (branch_id, status, created_at DESC)`);
+    await knex.raw(`CREATE INDEX IF NOT EXISTS idx_orders_status_created_at ON orders (status, created_at) WHERE status IN ('ready','assigned')`);
+    await knex.raw(`CREATE INDEX IF NOT EXISTS idx_orders_delivery_agent_id_status ON orders (delivery_agent_id, status) WHERE delivery_agent_id IS NOT NULL`);
+
+    // Check if pg_partman extension is available
+    const hasPartman = await knex.raw(`
+        SELECT 1 FROM pg_available_extensions WHERE name = 'pg_partman'
+    `).then((res) => (res.rows?.length ?? 0) > 0).catch(() => false);
+
+    let partmanConfigured = false;
+    if (hasPartman) {
+        try {
+            await knex.raw(`
+                CREATE SCHEMA IF NOT EXISTS partman;
+                CREATE EXTENSION IF NOT EXISTS pg_partman SCHEMA partman;
+                SELECT partman.create_parent(
+                    p_parent_table => 'public.orders',
+                    p_control => 'created_at',
+                    p_interval => '1 month',
+                    p_premake => 4
+                );
+            `);
+            partmanConfigured = true;
+        } catch {
+            partmanConfigured = false;
+        }
+    }
+
+    if (!partmanConfigured) {
+        // Backup plan: Native Declarative Partitioning Hardening with default catch-all partition
+        await knex.raw(`CREATE TABLE IF NOT EXISTS orders_default PARTITION OF orders DEFAULT`);
+    }
 }
 
 export async function down(knex: Knex): Promise<void> {

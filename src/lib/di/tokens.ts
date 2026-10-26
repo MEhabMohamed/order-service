@@ -2,35 +2,36 @@ export const TOKENS = {
     // infra
     Logger: Symbol.for("Logger"),
     CacheProvider: Symbol.for("CacheProvider"),
-    RedisClient: Symbol.for("RedisClient"),
     MessageBroker: Symbol.for("MessageBroker"),
     CoreClient: Symbol.for("CoreClient"),
     WsServer: Symbol.for("WsServer"),
+    PermissionCacheService: Symbol.for("PermissionCacheService"),
+    CoreDataCacheService: Symbol.for("CoreDataCacheService"),
 
-    // domain
+    // app: order
     OrderService: Symbol.for("OrderService"),
     OrderController: Symbol.for("OrderController"),
-    OrderCoreEventsHandler: Symbol.for("OrderCoreEventsHandler"),
 
+    // app: payment
+    KashierProvider: Symbol.for("KashierProvider"),
     PaymentService: Symbol.for("PaymentService"),
-    PaymentController: Symbol.for("PaymentController"),
     KashierWebhookService: Symbol.for("KashierWebhookService"),
+    PaymentController: Symbol.for("PaymentController"),
     WebhookController: Symbol.for("WebhookController"),
 
-    // Deliveries module
-    DeliveryService: Symbol.for("DeliveryService"),
-    AssignmentService: Symbol.for("AssignmentService"),
-    DeliveryController: Symbol.for("DeliveryController"),
-
-    // Agents module
+    // app: agent (presence + accept/reject + tasks + earnings)
     PresenceService: Symbol.for("PresenceService"),
     AgentService: Symbol.for("AgentService"),
-    EarningService: Symbol.for("EarningService"),
     AgentController: Symbol.for("AgentController"),
-    PresenceController: Symbol.for("PresenceController"),
 
-    // Restaurant finance module
+    // app: assignment (broadcast worker + claim service)
+    AssignmentService: Symbol.for("AssignmentService"),
+    AssignmentController: Symbol.for("AssignmentController"),
+
+    // app: settlement (delivered → balance + earnings + commission)
+    SettlementService: Symbol.for("SettlementService"),
+
+    // app: finance (balance + payouts)
     FinanceService: Symbol.for("FinanceService"),
     FinanceController: Symbol.for("FinanceController"),
 };
-

@@ -2,65 +2,70 @@ import "reflect-metadata";
 import {container} from "tsyringe";
 import {TOKENS} from "./tokens";
 import {Logger} from "../logger/logger";
-import {cacheProvider, redisClient} from "../cache/init";
+import {cacheProvider} from "../cache/init";
 import {messageBroker} from "../messaging/init";
 import {coreClient} from "../core-client/core-client";
-
-import {OrderService} from "../../app/orders/service/order.service";
-import {OrderController} from "../../app/orders/controller/order.controller";
-import {OrderCoreEventsHandler} from "../../app/orders/events/order-event-handlers";
-
-import {PaymentService} from "../../app/payments/service/payment.service";
-import {PaymentController} from "../../app/payments/controller/payment.controller";
-import {KashierWebhookService} from "../../app/payments/service/kashier-webhook.service";
-import {WebhookController} from "../../app/payments/controller/webhook.controller";
-
-import {DeliveryService} from "../../app/deliveries/service/delivery.service";
-import {AssignmentService} from "../../app/deliveries/service/assignment.service";
-import {DeliveryController} from "../../app/deliveries/controller/delivery.controller";
-
-import {PresenceService} from "../../app/agents/service/presence.service";
-import {AgentService} from "../../app/agents/service/agent.service";
-import {EarningService} from "../../app/agents/service/earning.service";
-import {AgentController} from "../../app/agents/controller/agent.controller";
-import {PresenceController} from "../../app/agents/controller/presence.controller";
+import {PermissionCacheService} from "../rbac/permission-cache.service";
+import {CoreDataCacheService} from "../../app/order/service/core-data-cache.service";
+import {OrderService} from "../../app/order/service/order.service";
+import {OrderController} from "../../app/order/controller/order.controller";
+import {env} from "../config/env";
+import {KashierClient} from "../../pkg/payments/kashier/kashier.client";
+import {PaymentService} from "../../app/payment/service/payment.service";
+import {KashierWebhookService} from "../../app/payment/service/kashier-webhook.service";
+import {PaymentController} from "../../app/payment/controller/payment.controller";
+import {WebhookController} from "../../app/payment/controller/webhook.controller";
+import {PresenceService} from "../../app/agent/service/presence.service";
+import {SettlementService} from "../../app/agent/service/settlement.service";
+import {AgentService} from "../../app/agent/service/agent.service";
+import {AgentController} from "../../app/agent/controller/agent.controller";
+import {AssignmentService} from "../../app/assignment/service/assignment.service";
+import {AssignmentController} from "../../app/assignment/controller/assignment.controller";
+import {FinanceService} from "../../app/finance/service/finance.service";
+import {FinanceController} from "../../app/finance/controller/finance.controller";
 
 // Infrastructure
 container.registerSingleton<Logger>(TOKENS.Logger, Logger);
 container.registerInstance(TOKENS.CacheProvider, cacheProvider);
-container.registerInstance(TOKENS.RedisClient, redisClient);
 container.registerInstance(TOKENS.MessageBroker, messageBroker);
 container.registerInstance(TOKENS.CoreClient, coreClient);
+container.registerSingleton<PermissionCacheService>(TOKENS.PermissionCacheService, PermissionCacheService);
+container.registerSingleton<CoreDataCacheService>(TOKENS.CoreDataCacheService, CoreDataCacheService);
 
-// Orders module
+// pkg providers (constructed eagerly with env config)
+const kashierClient = new KashierClient({
+    baseUrl: env.kashier.baseUrl,
+    merchantId: env.kashier.merchantId,
+    apiKey: env.kashier.apiKey,
+    secretKey: env.kashier.secretKey,
+    paymentType: env.kashier.paymentType,
+    serverWebhookUrl: env.kashier.webhookUrl,
+    merchantRedirect: env.kashier.returnUrl,
+    failureRedirectEnabled: false,
+    sessionTimeoutSec: env.payments.sessionTimeoutMin * 60,
+});
+container.registerInstance(TOKENS.KashierProvider, kashierClient);
+
+// Domain: order
 container.registerSingleton<OrderService>(TOKENS.OrderService, OrderService);
 container.registerSingleton<OrderController>(TOKENS.OrderController, OrderController);
-container.registerSingleton<OrderCoreEventsHandler>(TOKENS.OrderCoreEventsHandler, OrderCoreEventsHandler);
 
-// Payments module
+// Domain: payment
 container.registerSingleton<PaymentService>(TOKENS.PaymentService, PaymentService);
-container.registerSingleton<PaymentController>(TOKENS.PaymentController, PaymentController);
 container.registerSingleton<KashierWebhookService>(TOKENS.KashierWebhookService, KashierWebhookService);
+container.registerSingleton<PaymentController>(TOKENS.PaymentController, PaymentController);
 container.registerSingleton<WebhookController>(TOKENS.WebhookController, WebhookController);
 
-// Deliveries module
-container.registerSingleton<DeliveryService>(TOKENS.DeliveryService, DeliveryService);
-container.registerSingleton<AssignmentService>(TOKENS.AssignmentService, AssignmentService);
-container.registerSingleton<DeliveryController>(TOKENS.DeliveryController, DeliveryController);
-
-import { FinanceService } from "../../app/restaurant-finance/service/finance.service";
-import { FinanceController } from "../../app/restaurant-finance/controller/finance.controller";
-
-// Agents module
+// Domain: agent + assignment + settlement
 container.registerSingleton<PresenceService>(TOKENS.PresenceService, PresenceService);
+container.registerSingleton<AssignmentService>(TOKENS.AssignmentService, AssignmentService);
+container.registerSingleton<SettlementService>(TOKENS.SettlementService, SettlementService);
 container.registerSingleton<AgentService>(TOKENS.AgentService, AgentService);
-container.registerSingleton<EarningService>(TOKENS.EarningService, EarningService);
 container.registerSingleton<AgentController>(TOKENS.AgentController, AgentController);
-container.registerSingleton<PresenceController>(TOKENS.PresenceController, PresenceController);
+container.registerSingleton<AssignmentController>(TOKENS.AssignmentController, AssignmentController);
 
-// Restaurant finance module
+// Domain: finance
 container.registerSingleton<FinanceService>(TOKENS.FinanceService, FinanceService);
 container.registerSingleton<FinanceController>(TOKENS.FinanceController, FinanceController);
 
 export {container};
-

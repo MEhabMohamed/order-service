@@ -1,63 +1,85 @@
-import crypto from "crypto";
-import { KashierWebhookData } from "./kashier.types";
+import { createHmac, timingSafeEqual } from "crypto";
 
 /**
- * Builds the canonical signature payload string according to Kashier documentation:
- * 1. Sort data.signatureKeys alphabetically.
- * 2. Select corresponding key-values from data.
- * 3. URL-encode each value (values only, not keys).
- * 4. Join key=value with '&'.
+ * Kashier webhook signature verification.
+ *
+ * Per https://developers.kashier.io/webhooks/setup and verified against live
+ * webhooks:
+ *   1. Read `signatureKeys` from the inbound `data` object.
+ *   2. Sort the field names alphabetically.
+ *   3. Build `key=encodeURIComponent(value)&...` joined with `&`. Values
+ *      MUST be URL-encoded — Kashier signs the encoded form, so unencoded
+ *      strings with spaces/colons/pipes produce a different digest.
+ *   4. HMAC-SHA256 with the Payment API Key as the secret.
+ *   5. Compare the hex digest with the `x-kashier-signature` header using timingSafeEqual.
  */
-export function buildSignaturePayload(data: KashierWebhookData): string {
-    if (!data.signatureKeys || !Array.isArray(data.signatureKeys)) {
-        throw new Error("Missing signatureKeys array in Kashier webhook data");
-    }
-
-    const sortedKeys = [...data.signatureKeys].sort();
-    const pairs: string[] = [];
-
-    for (const key of sortedKeys) {
-        const rawValue = data[key];
-        const stringValue = rawValue !== undefined && rawValue !== null ? String(rawValue) : "";
-        const encodedValue = encodeURIComponent(stringValue);
-        pairs.push(`${key}=${encodedValue}`);
-    }
-
-    return pairs.join("&");
+export function buildSignaturePayload(
+    data: Record<string, unknown>,
+    signatureKeys?: string[],
+): string {
+    const keys = (signatureKeys ?? (data.signatureKeys as string[]) ?? Object.keys(data).filter(k => k !== "signatureKeys"));
+    return [...keys]
+        .sort()
+        .map((k) => {
+            const v = data[k];
+            const stringified = v === undefined || v === null ? "" : String(v);
+            return `${k}=${encodeURIComponent(stringified)}`;
+        })
+        .join("&");
 }
 
-/**
- * Computes the HMAC-SHA256 signature for the Kashier webhook data using the merchant Payment API Key.
- */
-export function computeWebhookSignature(data: KashierWebhookData, apiKey: string): string {
-    const payload = buildSignaturePayload(data);
-    return crypto.createHmac("sha256", apiKey).update(payload).digest("hex");
+export function computeWebhookSignature(data: Record<string, unknown>, apiKey: string): string;
+export function computeWebhookSignature(data: Record<string, unknown>, signatureKeys: string[], apiKey: string): string;
+export function computeWebhookSignature(
+    data: Record<string, unknown>,
+    arg2: string[] | string,
+    arg3?: string,
+): string {
+    let signatureKeys: string[];
+    let apiKey: string;
+    if (Array.isArray(arg2)) {
+        signatureKeys = arg2;
+        apiKey = arg3!;
+    } else {
+        apiKey = arg2;
+        signatureKeys = (data.signatureKeys as string[]) ?? [];
+    }
+    const payload = buildSignaturePayload(data, signatureKeys);
+    return createHmac("sha256", apiKey).update(payload, "utf8").digest("hex");
 }
 
-/**
- * Verifies that the provided x-kashier-signature header matches the computed HMAC-SHA256.
- */
+export function verifyWebhookSignature(providedSignature: string, data: Record<string, unknown>, apiKey: string): boolean;
+export function verifyWebhookSignature(data: Record<string, unknown>, signatureKeys: string[], apiKey: string, providedSignature: string): boolean;
 export function verifyWebhookSignature(
-    signatureHeader: string | undefined | null,
-    data: KashierWebhookData,
-    apiKey: string
+    arg1: any,
+    arg2: any,
+    arg3: any,
+    arg4?: any,
 ): boolean {
-    if (!signatureHeader || !data || !apiKey) {
-        return false;
+    let data: Record<string, unknown>;
+    let signatureKeys: string[];
+    let apiKey: string;
+    let providedSignature: string;
+
+    if (typeof arg1 === "string" && typeof arg2 === "object") {
+        // (providedSignature, data, apiKey)
+        providedSignature = arg1;
+        data = arg2;
+        apiKey = arg3;
+        signatureKeys = (data.signatureKeys as string[]) ?? [];
+    } else {
+        // (data, signatureKeys, apiKey, providedSignature)
+        data = arg1;
+        signatureKeys = arg2;
+        apiKey = arg3;
+        providedSignature = arg4;
     }
 
+    if (!providedSignature || typeof providedSignature !== "string") return false;
+    const expected = computeWebhookSignature(data, signatureKeys, apiKey);
+    if (expected.length !== providedSignature.length) return false;
     try {
-        const expected = computeWebhookSignature(data, apiKey).toLowerCase();
-        const actual = signatureHeader.trim().toLowerCase();
-
-        if (expected.length !== actual.length) {
-            return false;
-        }
-
-        const expectedBuf = Buffer.from(expected, "utf8");
-        const actualBuf = Buffer.from(actual, "utf8");
-
-        return crypto.timingSafeEqual(expectedBuf, actualBuf);
+        return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(providedSignature, "hex"));
     } catch {
         return false;
     }

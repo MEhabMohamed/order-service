@@ -2,6 +2,7 @@ declare namespace Express {
     interface Request {
         correlationId?: string;
         region?: string;
+        rawBody?: Buffer;
         user?: {
             userId: number;
             role: string;
@@ -9,6 +10,7 @@ declare namespace Express {
             restaurantId?: number;
             restaurantRole?: string;
             branchIds?: number[];
+            region?: string;
         };
     }
 }
