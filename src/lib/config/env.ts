@@ -2,7 +2,6 @@ import path from "path";
 import { config } from "dotenv";
 import { z } from "zod";
 
-// C:\Users\ABDULLAH\Desktop\quickbite\order-service\.env
 config({ path: path.resolve(__dirname, "../../../.env") });
 
 const baseSchema = z.object({
