@@ -3,7 +3,7 @@ import http from "http";
 import { logger } from "./lib/logger/logger";
 import { destroyAll, pingAll } from "./lib/knex/knex";
 import { messageBroker } from "./lib/messaging/init";
-import { startCoreEventsConsumer, registerHandler } from "./lib/core-events/consumer";
+import { startCoreEventsConsumer } from "./lib/core-events/consumer";
 import { attachWsServer } from "./lib/websocket/ws-server";
 import { container } from "./lib/di/container";
 import { TOKENS } from "./lib/di/tokens";
@@ -19,7 +19,7 @@ import { registerArchivalJobs } from "./lib/jobs/archival.worker";
  * a `register({...})` call and import it here.
  */
 
-// Socket.io needs an http.Server to attach to even if we don't listen on a
+// Socket.io needs an http.Server to attach to, even if we don't listen on a
 // real port. Bind to 0 -> ephemeral port; the redis adapter handles the real
 // fan-out so this server never receives an HTTP request.
 const noopServer = http.createServer();

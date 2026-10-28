@@ -1,9 +1,10 @@
-import {retry} from "../../utils/retry";
-import {IPaymentProvider} from "../payment.interface";
-import {CreateSessionInput, CreateSessionResult, VerifyWebhookInput} from "../types";
-import {KashierCreateSessionRequest, KashierCreateSessionResponse} from "./types";
-import {verifyWebhookSignature} from "./kashier.signature";
-import {env} from "../../../lib/config/env";
+import { retry } from "../../utils/retry";
+import { IPaymentProvider } from "../payment.interface";
+import { CreateSessionInput, CreateSessionResult, VerifyWebhookInput } from "../types";
+import { KashierCreateSessionResponse } from "./types";
+import { verifyWebhookSignature } from "./kashier.signature";
+import { env } from "../../../lib/config/env";
+import { toMs, toSec } from "../../utils/time";
 
 export interface KashierClientConfig {
     baseUrl: string;
@@ -33,12 +34,12 @@ export class KashierClient implements IPaymentProvider {
             serverWebhookUrl: env.kashier.serverWebhookUrl,
             merchantRedirect: env.kashier.merchantRedirect,
             failureRedirectEnabled: env.kashier.failureRedirectEnabled,
-            sessionTimeoutSec: env.payments.sessionTimeoutMin * 60,
+            sessionTimeoutSec: toSec.minute(env.payments.sessionTimeoutMin),
         };
     }
 
     async createSession(input: CreateSessionInput & { orderPublicId?: string; defaultMethod?: string }): Promise<CreateSessionResult & { sessionId?: string; sessionUrl?: string }> {
-        const expireAt = new Date(Date.now() + this.cfg.sessionTimeoutSec * 1000).toISOString();
+        const expireAt = new Date(Date.now() + toMs.second(this.cfg.sessionTimeoutSec)).toISOString();
         const amount = typeof input.amount === "number" && input.orderPublicId
             ? (input.amount / 100).toFixed(2)
             : input.amount;
@@ -58,7 +59,7 @@ export class KashierClient implements IPaymentProvider {
             description: input.description,
             interactionSource: "ECOMMERCE",
             expireAt,
-            customer: {reference: input.customerReference ?? ""},
+            customer: { reference: input.customerReference ?? "" },
         };
         if (input.defaultMethod) {
             body.defaultMethod = input.defaultMethod;

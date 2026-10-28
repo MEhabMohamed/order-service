@@ -2,7 +2,7 @@ import { db, dbArchive } from "../knex/knex";
 import { redisClient } from "../cache/init";
 import { logger } from "../logger/logger";
 import { env } from "../config/env";
-import { toMs } from "../../pkg/utils/time";
+import { toMs, toSec } from "../../pkg/utils/time";
 import { register } from "./job-registry";
 
 export async function runArchival(
@@ -18,7 +18,7 @@ export async function runArchival(
     for (const region of regions) {
         const lockKey = `archival:${region}:lock`;
         // Acquire distributed lock for 1 hour (3600 seconds)
-        const acquired = await redisClient.set(lockKey, "1", "EX", 3600, "NX").catch(() => null);
+        const acquired = await redisClient.set(lockKey, "1", "EX", toSec.hour(1), "NX").catch(() => null);
         if (!acquired) {
             logger.info("Archival skipped — lock already held by another worker", { region });
             continue;
@@ -73,15 +73,15 @@ export async function runArchival(
 
                 // Prune from Hot (children first, then parent to satisfy FK constraints)
                 if (earnings.length > 0) {
-                    await hot("agent_earnings").whereIn("id", earnings.map((e: any) => e.id)).delete().catch(() => {});
+                    await hot("agent_earnings").whereIn("id", earnings.map((e: any) => e.id)).delete().catch(() => { });
                 }
                 if (txs.length > 0) {
-                    await hot("transactions").whereIn("id", txs.map((t: any) => t.id)).delete().catch(() => {});
+                    await hot("transactions").whereIn("id", txs.map((t: any) => t.id)).delete().catch(() => { });
                 }
                 if (items.length > 0) {
-                    await hot("order_items").whereIn("id", items.map((i: any) => i.id)).delete().catch(() => {});
+                    await hot("order_items").whereIn("id", items.map((i: any) => i.id)).delete().catch(() => { });
                 }
-                await hot("orders").whereIn("id", orderIds).delete().catch(() => {});
+                await hot("orders").whereIn("id", orderIds).delete().catch(() => { });
 
                 totalArchivedOrders += eligibleOrders.length;
                 if (eligibleOrders.length < 1000) {
@@ -122,7 +122,7 @@ export async function runArchival(
         } catch (err: any) {
             logger.error("Archival run encountered error", { region, error: err.message });
         } finally {
-            await redisClient.del(lockKey).catch(() => {});
+            await redisClient.del(lockKey).catch(() => { });
         }
     }
 
