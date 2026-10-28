@@ -3,6 +3,7 @@ import {PaymentSessionStatus, TransactionType, TransactionMethod, TransactionSta
 export interface CreateSessionRowInput {
     region: string;
     orderId: number;
+    orderCreatedAt: Date;
     providerId: number;
     providerSessionId: string;
     redirectUrl: string;

@@ -163,6 +163,7 @@ export class SettlementService {
                 region,
                 agentId: order.deliveryAgentId!,
                 orderId: order.id,
+                orderCreatedAt: order.createdAt,
                 amount: earning,
                 currency: order.currency,
             }, trx);

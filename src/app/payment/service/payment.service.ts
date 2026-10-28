@@ -75,6 +75,7 @@ export class PaymentService {
         const session = await createSession({
             region: order.region,
             orderId: order.id,
+            orderCreatedAt: order.createdAt,
             providerId: PAYMENT_PROVIDER_IDS[PaymentProviderName.KASHIER],
             providerSessionId: providerResp.providerSessionId,
             redirectUrl: providerResp.redirectUrl,

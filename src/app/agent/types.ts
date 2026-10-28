@@ -2,6 +2,7 @@ export interface InsertAgentEarningInput {
     region: string;
     agentId: number;
     orderId: number;
+    orderCreatedAt: Date;
     amount: number;
     currency: string;
 }

@@ -10,8 +10,6 @@ import { attachWsServer } from "./lib/websocket/ws-server";
 import { container } from "./lib/di/container";
 import { TOKENS } from "./lib/di/tokens";
 import { registerOrderModuleCoreEventHandlers } from "./app/order/core-events.handlers";
-import { registerHandler } from "./lib/core-events/consumer";
-import { PermissionCacheService } from "./lib/rbac/permission-cache.service";
 import { startArchivalWorker } from "./lib/jobs/archival.worker";
 
 const app = createApp();
@@ -21,8 +19,6 @@ const io = attachWsServer(server);
 container.registerInstance(TOKENS.WsServer, io);
 
 registerOrderModuleCoreEventHandlers();
-const permissionCache = container.resolve<PermissionCacheService>(TOKENS.PermissionCacheService);
-registerHandler("rbac.permissions_changed", permissionCache.handlePermissionsChanged);
 
 server.listen(env.port, async () => {
     logger.info(`order-service listening on :${env.port}`);

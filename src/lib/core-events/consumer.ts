@@ -1,13 +1,14 @@
-import {IMessageBroker, ConsumeMessage} from "../../pkg/messaging/message-broker.interface";
-import {env} from "../config/env";
-import {logger} from "../logger/logger";
-import {cacheProvider} from "../cache/init";
-import {CoreEventEnvelope, CoreEventHandler} from "./types";
+import { IMessageBroker, ConsumeMessage } from "../../pkg/messaging/message-broker.interface";
+import { env } from "../config/env";
+import { logger } from "../logger/logger";
+import { cacheProvider } from "../cache/init";
+import { CoreEventEnvelope, CoreEventHandler } from "./types";
+import { toSec } from "../../pkg/utils/time";
 
 // Safety window for redelivery (consumer restart, nack-requeue, ops DLQ replay).
 // Longer than realistic redelivery lag, short enough to keep Redis bounded.
 // Safe to expire: all handlers are idempotent cache invalidations.
-const DEDUPE_TTL_SEC = 24 * 60 * 60;
+const DEDUPE_TTL_SEC = toSec.day(1);
 
 const handlers = new Map<string, CoreEventHandler>();
 

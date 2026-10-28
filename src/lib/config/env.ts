@@ -51,9 +51,9 @@ const baseSchema = z.object({
     KASHIER_API_KEY: z.string(),
     KASHIER_SECRET_KEY: z.string(),
     KASHIER_PAYMENT_TYPE: z.string().default("credit"),
-    KASHIER_RETURN_URL: z.string().default("https://app.quickbite.io/checkout/return"),
-    KASHIER_FAIL_URL: z.string().default("https://app.quickbite.io/checkout/failed"),
-    KASHIER_WEBHOOK_URL: z.string().default("https://api.quickbite.io/api/payments/webhook"),
+    KASHIER_RETURN_URL: z.string().default("https://resurrect-trodden-ravishing.ngrok-free.dev/return"),
+    KASHIER_FAIL_URL: z.string().default("https://resurrect-trodden-ravishing.ngrok-free.dev/failed"),
+    KASHIER_WEBHOOK_URL: z.string().default("https://resurrect-trodden-ravishing.ngrok-free.dev/api/webhook/kashier"),
     PAYMENT_SESSION_TIMEOUT_MIN: z.string().default("15"),
     ONLINE_PAYMENT_REGIONS: z.string().default("eg"),
 

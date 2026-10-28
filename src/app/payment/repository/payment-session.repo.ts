@@ -7,6 +7,7 @@ export const PAYMENT_SESSION_COLUMNS = [
     "id",
     "region",
     "order_id",
+    "order_created_at",
     "provider_id",
     "provider_session_id",
     "redirect_url",
@@ -24,6 +25,7 @@ function toEntity(row: any): PaymentSessionEntity {
         id: Number(row.id),
         region: row.region,
         orderId: Number(row.order_id),
+        orderCreatedAt: row.order_created_at,
         providerId: Number(row.provider_id),
         providerSessionId: row.provider_session_id,
         redirectUrl: row.redirect_url,
@@ -42,6 +44,7 @@ export async function createSession(input: CreateSessionRowInput, conn: Knex): P
         .insert({
             region: input.region,
             order_id: input.orderId,
+            order_created_at: input.orderCreatedAt,
             provider_id: input.providerId,
             provider_session_id: input.providerSessionId,
             redirect_url: input.redirectUrl,

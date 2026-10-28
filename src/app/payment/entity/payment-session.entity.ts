@@ -4,6 +4,7 @@ export class PaymentSessionEntity {
     id!: number;
     region!: string;
     orderId!: number;
+    orderCreatedAt!: Date;
     providerId!: number;
     providerSessionId!: string;
     redirectUrl!: string;

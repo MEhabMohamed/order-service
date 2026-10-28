@@ -7,6 +7,7 @@ const AGENT_EARNING_COLUMNS = [
     "region",
     "agent_id",
     "order_id",
+    "order_created_at",
     "amount",
     "currency",
     "earned_at",
@@ -18,6 +19,7 @@ function toEntity(row: any): AgentEarningEntity {
         region: row.region,
         agentId: Number(row.agent_id),
         orderId: Number(row.order_id),
+        orderCreatedAt: row.order_created_at,
         amount: Number(row.amount),
         currency: row.currency,
         earnedAt: row.earned_at,
@@ -37,6 +39,7 @@ export async function insertEarning(
             region: input.region,
             agent_id: input.agentId,
             order_id: input.orderId,
+            order_created_at: input.orderCreatedAt,
             amount: input.amount,
             currency: input.currency,
         })

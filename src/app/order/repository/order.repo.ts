@@ -100,6 +100,7 @@ export async function createOrder(input: CreateOrderInput, conn: Knex): Promise<
             commission: 0,
             currency: input.currency,
             payment_method: input.paymentMethod,
+            created_at: new Date(),
         })
         .returning(ORDER_COLUMNS as unknown as string[]);
     return toEntity(row);

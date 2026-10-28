@@ -1,44 +1,44 @@
-import {randomUUID} from "crypto";
-import {injectable, inject} from "tsyringe";
-import {Server as IoServer} from "socket.io";
-import {container} from "../../../lib/di/container";
-import {TOKENS} from "../../../lib/di/tokens";
-import {db} from "../../../lib/knex/knex";
-import {assertRegion} from "../../../lib/sharding/regions";
-import {ICacheProvider} from "../../../pkg/cache/cache.interface";
-import {logger} from "../../../lib/logger/logger";
-import {UnAuthorisedError} from "../../../lib/auth/errors";
-import {sumMinor, multiplyMinor} from "../../../pkg/utils/money";
-import {PaginationParams, FilterParams} from "../../../lib/http/pagination/cursor-pagination";
+import { randomUUID } from "crypto";
+import { injectable, inject } from "tsyringe";
+import { Server as IoServer } from "socket.io";
+import { container } from "../../../lib/di/container";
+import { TOKENS } from "../../../lib/di/tokens";
+import { db } from "../../../lib/knex/knex";
+import { assertRegion } from "../../../lib/sharding/regions";
+import { ICacheProvider } from "../../../pkg/cache/cache.interface";
+import { logger } from "../../../lib/logger/logger";
+import { UnAuthorisedError } from "../../../lib/auth/errors";
+import { sumMinor, multiplyMinor } from "../../../pkg/utils/money";
+import { PaginationParams, FilterParams } from "../../../lib/http/pagination/cursor-pagination";
 import {
     getBranch,
     getBranchProducts,
     reserveStock as coreReserveStock,
     releaseStock as coreReleaseStock,
 } from "../../../lib/core-client/branch.client";
-import {CoreBranchProduct} from "../../../lib/core-client/types";
-import {getCustomerAddress, flattenAddress} from "../../../lib/core-client/address.client";
-import {CoreDataCacheService} from "./core-data-cache.service";
-import {PaymentService} from "../../payment/service/payment.service";
-import {assertTransition} from "./order-status.service";
-import {OrderEntity} from "../entity/order.entity";
-import {OrderItemEntity} from "../entity/order-item.entity";
-import {OrderStatus, PaymentMethod, Currency, StatusActor} from "../enums";
-import {ActorContext, OrderLineDraft, UnavailableItem} from "../types";
+import { CoreBranchProduct } from "../../../lib/core-client/types";
+import { getCustomerAddress, flattenAddress } from "../../../lib/core-client/address.client";
+import { CoreDataCacheService } from "./core-data-cache.service";
+import { PaymentService } from "../../payment/service/payment.service";
+import { assertTransition } from "./order-status.service";
+import { OrderEntity } from "../entity/order.entity";
+import { OrderItemEntity } from "../entity/order-item.entity";
+import { OrderStatus, PaymentMethod, Currency, StatusActor } from "../enums";
+import { ActorContext, OrderLineDraft, UnavailableItem } from "../types";
 import {
     OrderNotFoundError,
     BranchNotAcceptingOrdersError,
     OnlinePaymentNotAvailableError,
     outOfStockError,
 } from "../errors";
-import {env} from "../../../lib/config/env";
+import { env } from "../../../lib/config/env";
 import {
     OrderResponseDTO,
     OrderDetailResponseDTO,
     OrderSummaryResponseDTO,
     OrderStatusResponseDTO,
 } from "../dto/order.response.dto";
-import {CreateOrderRequestDTO, UpdateOrderStatusRequestDTO} from "../dto/order.request.dto";
+import { CreateOrderRequestDTO, UpdateOrderStatusRequestDTO } from "../dto/order.request.dto";
 import {
     createOrder,
     findOrderByPublicId,
@@ -51,8 +51,8 @@ import {
     findItemsByOrderIds,
     countItemsByOrderIds,
 } from "../repository/order-item.repo";
-import {insertOutboxEvent} from "../../../lib/events/outbox.repo";
-import {EVENT_TYPES} from "../../../lib/events/event-types";
+import { insertOutboxEvent } from "../../../lib/events/outbox.repo";
+import { EVENT_TYPES } from "../../../lib/events/event-types";
 
 const SERVICE_FEE_MINOR = 1000; // 10.00 EGP / SAR — paid to the platform.
 
@@ -65,7 +65,7 @@ export class OrderService {
         @inject(TOKENS.CacheProvider) private readonly cache: ICacheProvider,
         @inject(TOKENS.CoreDataCacheService) private readonly coreData: CoreDataCacheService,
         @inject(TOKENS.PaymentService) private readonly paymentService: PaymentService,
-    ) {}
+    ) { }
 
     // Lazy access — WsServer is registered after the DI container builds the
     // routes (it depends on the http.Server, which is created in server.ts).
@@ -100,7 +100,8 @@ export class OrderService {
 
         // 4. Money
         const subtotal = sumMinor(orderLineDrafts.map((l) => l.lineTotal));
-        const total = subtotal + branch.deliveryFee + SERVICE_FEE_MINOR;
+        const deliveryFee = Number(branch.deliveryFee ?? 10);
+        const total = subtotal + deliveryFee + SERVICE_FEE_MINOR;
 
         // 5. Reserve stock FIRST. If anything below this point fails, we MUST release.
         // Reserve is atomic on the core side (FOR UPDATE + 409 on underflow) so we
@@ -109,7 +110,7 @@ export class OrderService {
         const publicId = randomUUID();
         await coreReserveStock(
             body.branchId,
-            body.items.map((i) => ({productId: i.productId, quantity: i.quantity})),
+            body.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
             publicId,
             correlationId,
         );
@@ -136,7 +137,7 @@ export class OrderService {
                 branchLng: Number(branch.lng),
                 status: body.paymentMethod === PaymentMethod.ONLINE ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
                 subtotal,
-                deliveryFee: branch.deliveryFee,
+                deliveryFee,
                 serviceFee: SERVICE_FEE_MINOR,
                 total,
                 currency: branch.currency as Currency,
@@ -147,6 +148,7 @@ export class OrderService {
                 orderLineDrafts.map((l) => ({
                     region: resolvedRegion,
                     orderId: order.id,
+                    orderCreatedAt: order.createdAt,
                     productId: l.productId,
                     quantity: l.quantity,
                     unitPriceSnapshot: l.unitPrice,
@@ -189,7 +191,7 @@ export class OrderService {
                     expiresAt: result.dto.expiresAt,
                 };
             } catch (err) {
-                logger.warn("payment init failed; voiding order", {publicId: order.publicId, error: (err as Error).message});
+                logger.warn("payment init failed; voiding order", { publicId: order.publicId, error: (err as Error).message });
                 await this.voidOrderSafe(resolvedRegion, order.publicId);
                 await this.releaseStockSafe(body.branchId, body.items, order.publicId, correlationId);
                 throw err;
@@ -218,7 +220,7 @@ export class OrderService {
                 throw e;
             }
         } catch (err) {
-            logger.error("voidOrderSafe failed (order remains in pending_payment)", {publicId, error: (err as Error).message});
+            logger.error("voidOrderSafe failed (order remains in pending_payment)", { publicId, error: (err as Error).message });
         }
     }
 
@@ -237,7 +239,7 @@ export class OrderService {
         const yearStart = new Date(Date.UTC(year, 0, 1));
         const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
         const conn = db(region);
-        const result = await findOrdersByCustomer({customerId: actor.userId, yearStart, yearEnd}, pagination, conn);
+        const result = await findOrdersByCustomer({ customerId: actor.userId, yearStart, yearEnd }, pagination, conn);
         const counts = await countItemsByOrderIds(result.data.map((o) => o.id), conn);
         return {
             data: result.data.map((o) => OrderSummaryResponseDTO.from(o, counts.get(o.id) ?? 0)),
@@ -258,7 +260,7 @@ export class OrderService {
     ) {
         const conn = db(region);
         const result = await findOrdersByRestaurantBranch(
-            {restaurantId, branchId, status, from, to},
+            { restaurantId, branchId, status, from, to },
             pagination,
             filters,
             conn,
@@ -276,7 +278,7 @@ export class OrderService {
         if (!order) throw OrderNotFoundError;
 
         const statusActor = this.resolveStatusActor(actor, order);
-        const {stamp} = assertTransition(order.status, body.status, {
+        const { stamp } = assertTransition(order.status, body.status, {
             actor: statusActor,
             reason: body.reason,
             placedAt: order.createdAt,
@@ -318,7 +320,7 @@ export class OrderService {
 
     // ── private helpers ──────────────────────────────────────────────────
     private buildOrderLineDrafts(
-        requested: Array<{productId: number; quantity: number}>,
+        requested: Array<{ productId: number; quantity: number }>,
         products: CoreBranchProduct[],
     ): OrderLineDraft[] {
         const byProduct = new Map<number, CoreBranchProduct>();
@@ -330,11 +332,11 @@ export class OrderService {
         for (const it of requested) {
             const p = byProduct.get(it.productId);
             if (!p || !p.isAvailable) {
-                unavailableItems.push({productId: it.productId, requested: it.quantity, available: 0});
+                unavailableItems.push({ productId: it.productId, requested: it.quantity, available: 0 });
                 continue;
             }
             if (p.stock < it.quantity) {
-                unavailableItems.push({productId: it.productId, requested: it.quantity, available: p.stock});
+                unavailableItems.push({ productId: it.productId, requested: it.quantity, available: p.stock });
                 continue;
             }
             drafts.push({
@@ -352,7 +354,7 @@ export class OrderService {
 
     private async releaseStockSafe(
         branchId: number,
-        items: Array<{productId: number; quantity: number}>,
+        items: Array<{ productId: number; quantity: number }>,
         idempotencyKey: string,
         correlationId?: string,
     ): Promise<void> {
@@ -399,7 +401,7 @@ export class OrderService {
     private async invalidateBranchOrdersCache(region: string, branchId: number) {
         try {
             await this.cache.del(RESTAURANT_ORDERS_CACHE_PREFIX(region, branchId));
-        } catch {}
+        } catch { }
     }
 }
 

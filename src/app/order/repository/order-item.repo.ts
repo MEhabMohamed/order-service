@@ -6,6 +6,7 @@ export const ORDER_ITEM_COLUMNS = [
     "id",
     "region",
     "order_id",
+    "order_created_at",
     "product_id",
     "quantity",
     "unit_price_snapshot",
@@ -20,6 +21,7 @@ function toEntity(row: any): OrderItemEntity {
         id: Number(row.id),
         region: row.region,
         orderId: Number(row.order_id),
+        orderCreatedAt: row.order_created_at,
         productId: Number(row.product_id),
         quantity: Number(row.quantity),
         unitPriceSnapshot: Number(row.unit_price_snapshot),
@@ -36,6 +38,7 @@ export async function bulkInsertItems(inputs: InsertOrderItemInput[], conn: Knex
         .insert(inputs.map((i) => ({
             region: i.region,
             order_id: i.orderId,
+            order_created_at: i.orderCreatedAt,
             product_id: i.productId,
             quantity: i.quantity,
             unit_price_snapshot: i.unitPriceSnapshot,

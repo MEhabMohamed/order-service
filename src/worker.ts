@@ -41,8 +41,6 @@ async function main() {
     }
 
     registerOrderModuleCoreEventHandlers();
-    const permissionCache = container.resolve<any>(TOKENS.PermissionCacheService);
-    registerHandler("rbac.permissions_changed", permissionCache.handlePermissionsChanged);
 
     messageBroker
         .connect()

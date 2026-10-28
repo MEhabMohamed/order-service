@@ -27,6 +27,7 @@ export interface CreateOrderInput {
 export interface InsertOrderItemInput {
     region: string;
     orderId: number;
+    orderCreatedAt: Date;
     productId: number;
     quantity: number;
     unitPriceSnapshot: number;

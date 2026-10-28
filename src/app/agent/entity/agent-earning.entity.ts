@@ -3,6 +3,7 @@ export class AgentEarningEntity {
     region!: string;
     agentId!: number;
     orderId!: number;
+    orderCreatedAt!: Date;
     amount!: number;
     currency!: string;
     earnedAt!: Date;

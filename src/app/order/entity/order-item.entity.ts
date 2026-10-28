@@ -2,6 +2,7 @@ export class OrderItemEntity {
     id!: number;
     region!: string;
     orderId!: number;
+    orderCreatedAt!: Date;
     productId!: number;
     quantity!: number;
     unitPriceSnapshot!: number;
