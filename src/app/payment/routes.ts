@@ -1,7 +1,8 @@
 import {Router} from "express";
 import {authenticate} from "../../lib/auth/guard";
-import {rbac, requireRestaurantMember} from "../../lib/auth/rbac";
+import {rbac, requireRestaurantMember, requireAdmin} from "../../lib/auth/rbac";
 import {requireConcreteRegion} from "../../lib/sharding/region-resolver";
+import {idempotency} from "../../lib/idempotency/idempotency";
 import {container} from "../../lib/di/container";
 import {TOKENS} from "../../lib/di/tokens";
 import {PaymentController} from "./controller/payment.controller";
@@ -18,6 +19,25 @@ paymentRouter.post(
     "/payments/webhook/kashier",
     requireConcreteRegion,
     webhookController.kashier,
+);
+
+// Admin-only: lookup transaction ID and payment details by order publicId.
+paymentRouter.get(
+    "/payments/orders/:publicId",
+    authenticate,
+    requireConcreteRegion,
+    requireAdmin,
+    paymentController.getByOrderPublicId,
+);
+
+// Admin-only refund execution.
+paymentRouter.post(
+    "/payments/:paymentId/refund",
+    authenticate,
+    requireConcreteRegion,
+    rbac({resource: "payments", action: "refund"}),
+    idempotency({strict: true}),
+    paymentController.refund,
 );
 
 // Restaurant-scoped read. requireRestaurantMember + rbac handle the auth;

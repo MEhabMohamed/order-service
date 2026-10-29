@@ -75,6 +75,15 @@ export async function findActiveSessionByOrderId(orderId: number, conn: Knex): P
     return row ? toEntity(row) : undefined;
 }
 
+export async function findLatestSessionByOrderId(orderId: number, conn: Knex): Promise<PaymentSessionEntity | undefined> {
+    const row = await conn("payment_sessions")
+        .select(PAYMENT_SESSION_COLUMNS as unknown as string[])
+        .where("order_id", orderId)
+        .orderBy("id", "desc")
+        .first();
+    return row ? toEntity(row) : undefined;
+}
+
 export async function updateSession(id: number, input: UpdateSessionRowInput, conn: Knex): Promise<PaymentSessionEntity> {
     const update: Record<string, unknown> = {
         status: input.status,

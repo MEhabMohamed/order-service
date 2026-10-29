@@ -126,6 +126,11 @@ export async function findOrderByPublicId(publicId: string, conn: Knex): Promise
     return row ? toEntity(row) : undefined;
 }
 
+export async function findOrderById(id: number, conn: Knex): Promise<OrderEntity | undefined> {
+    const row = await conn("orders").select(ORDER_COLUMNS as unknown as string[]).where({id}).first();
+    return row ? toEntity(row) : undefined;
+}
+
 /**
  * Returns the oldest READY orders that don't yet have a delivery agent.
  * Backed by `idx_orders_status_created_at` (partial WHERE status IN ('ready','assigned')).

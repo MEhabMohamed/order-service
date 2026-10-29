@@ -164,3 +164,48 @@ export async function findTransactionsByOrderIds(orderIds: number[], conn: Knex)
         .orderBy("id", "asc");
     return rows.map(toEntity);
 }
+
+export async function findChargeTransactionByOrderId(orderId: number, conn: Knex): Promise<TransactionEntity | undefined> {
+    const row = await conn("transactions")
+        .select(TRANSACTION_COLUMNS as unknown as string[])
+        .where({
+            order_id: orderId,
+            transaction_type: TransactionType.CHARGE,
+            status: TransactionStatus.SUCCEEDED,
+        })
+        .orderBy("id", "desc")
+        .first();
+    return row ? toEntity(row) : undefined;
+}
+
+export async function findSuccessfulRefundsByOrderId(orderId: number, conn: Knex): Promise<TransactionEntity[]> {
+    const rows = await conn("transactions")
+        .select(TRANSACTION_COLUMNS as unknown as string[])
+        .where({
+            order_id: orderId,
+            transaction_type: TransactionType.REFUND,
+            status: TransactionStatus.SUCCEEDED,
+        })
+        .orderBy("id", "asc");
+    return rows.map(toEntity);
+}
+
+export async function updateTransaction(
+    id: number,
+    patch: {isRefunded?: boolean; refundedPaymentId?: number | null; status?: TransactionStatus},
+    conn: Knex,
+): Promise<TransactionEntity> {
+    const updateData: Record<string, unknown> = {
+        updated_at: conn.fn.now(),
+    };
+    if (patch.isRefunded !== undefined) updateData.is_refunded = patch.isRefunded;
+    if (patch.refundedPaymentId !== undefined) updateData.refunded_payment_id = patch.refundedPaymentId;
+    if (patch.status !== undefined) updateData.status = patch.status;
+
+    const [row] = await conn("transactions")
+        .where({id})
+        .update(updateData)
+        .returning(TRANSACTION_COLUMNS as unknown as string[]);
+    return toEntity(row);
+}
+

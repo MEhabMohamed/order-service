@@ -2,23 +2,46 @@ import {injectable, inject} from "tsyringe";
 import {TOKENS} from "../../../lib/di/tokens";
 import {db} from "../../../lib/knex/knex";
 import {logger} from "../../../lib/logger/logger";
-import {fromMinor} from "../../../pkg/utils/money";
+import {fromMinor, sumMinor} from "../../../pkg/utils/money";
 import {toMs} from "../../../pkg/utils/time";
 import {env} from "../../../lib/config/env";
 import {IPaymentProvider} from "../../../pkg/payments/payment.interface";
 import {OrderEntity} from "../../order/entity/order.entity";
+import {findOrderById, findOrderByPublicId} from "../../order/repository/order.repo";
+import {OrderNotFoundError} from "../../order/errors";
 import {UnAuthorisedError} from "../../../lib/auth/errors";
+import {AppError} from "../../../lib/error/AppError";
 import {
     createSession,
     findActiveSessionByOrderId,
+    findLatestSessionByOrderId,
 } from "../repository/payment-session.repo";
-import {findTransactionWithRestaurant} from "../repository/transaction.repo";
+import {
+    createTransaction,
+    findTransactionById,
+    findTransactionWithRestaurant,
+    findSuccessfulRefundsByOrderId,
+    findChargeTransactionByOrderId,
+    findTransactionsByOrderIds,
+    updateTransaction,
+} from "../repository/transaction.repo";
 import {PaymentSessionEntity} from "../entity/payment-session.entity";
-import {PaymentSessionStatus, PaymentProviderName, PAYMENT_PROVIDER_IDS} from "../enums";
+import {
+    PaymentSessionStatus,
+    PaymentProviderName,
+    PAYMENT_PROVIDER_IDS,
+    TransactionType,
+    TransactionMethod,
+    TransactionStatus,
+} from "../enums";
 import {PaymentInitResponseDTO, PaymentResponseDTO} from "../dto/payment.response.dto";
+import {RefundRequestDTO, RefundResponseDTO} from "../dto/refund.dto";
 import {
     PaymentNotFoundError,
     PaymentProviderUnavailableError,
+    InvalidPaymentStatusForRefundError,
+    PaymentAlreadyRefundedError,
+    RefundExceedsChargeAmountError,
 } from "../errors";
 
 interface InitOnlinePaymentResult {
@@ -119,5 +142,153 @@ export class PaymentService {
         }
 
         return PaymentResponseDTO.from(found.transaction);
+    }
+
+    /**
+     * POST /payments/:paymentId/refund
+     *
+     * Admin-only refund execution.
+     * Validates that paymentId is a succeeded charge, calculates remaining
+     * refundable balance, writes a pending refund transaction to the ledger,
+     * calls Kashier refund API, and returns RefundResponseDTO.
+     * When Kashier confirms via webhook, reconcileRefund flips status to succeeded.
+     */
+    async refund(
+        paymentId: number,
+        dto: RefundRequestDTO,
+        region: string,
+        idempotencyKey?: string,
+    ): Promise<RefundResponseDTO> {
+        const conn = db(region);
+
+        const charge = await findTransactionById(paymentId, conn);
+        if (!charge) throw PaymentNotFoundError;
+
+        if (charge.transactionType !== TransactionType.CHARGE || charge.status !== TransactionStatus.SUCCEEDED) {
+            throw InvalidPaymentStatusForRefundError;
+        }
+
+        if (charge.isRefunded) {
+            throw PaymentAlreadyRefundedError;
+        }
+
+        if (!charge.orderId) {
+            throw new AppError("Payment is not tied to an order", 400);
+        }
+
+        const order = await findOrderById(charge.orderId, conn);
+        if (!order) throw new AppError("Order not found", 404);
+
+        const existingRefunds = await findSuccessfulRefundsByOrderId(order.id, conn);
+        const alreadyRefunded = sumMinor(existingRefunds.map((r) => r.amount));
+        const remainingRefundable = charge.amount - alreadyRefunded;
+
+        if (remainingRefundable <= 0) {
+            throw PaymentAlreadyRefundedError;
+        }
+
+        const refundAmountMinor = dto.amount ?? remainingRefundable;
+        if (refundAmountMinor <= 0 || refundAmountMinor > remainingRefundable) {
+            throw RefundExceedsChargeAmountError;
+        }
+
+        if (charge.method === TransactionMethod.ONLINE) {
+            const session = await findLatestSessionByOrderId(order.id, conn);
+            const kashierOrderId = (session?.rawLastPayload as any)?.data?.kashierOrderId
+                ?? (session?.rawInitPayload as any)?._id
+                ?? charge.providerReferenceId
+                ?? order.publicId;
+
+            const refundTx = await createTransaction({
+                region,
+                orderId: order.id,
+                transactionType: TransactionType.REFUND,
+                method: TransactionMethod.ONLINE,
+                providerId: PAYMENT_PROVIDER_IDS[PaymentProviderName.KASHIER],
+                providerReferenceId: null,
+                status: TransactionStatus.PENDING,
+                amount: refundAmountMinor,
+                currency: charge.currency,
+                srcAccId: null,
+                dstAccId: order.customerId,
+                idempotencyKey: idempotencyKey || `refund:${paymentId}:${Date.now()}`,
+            }, conn);
+
+            try {
+                const kashierRes = await this.kashier.refund({
+                    kashierOrderId,
+                    targetTransactionId: charge.providerReferenceId || undefined,
+                    amount: fromMinor(refundAmountMinor).toFixed(2),
+                    currency: charge.currency,
+                    reason: dto.reason,
+                });
+
+                if (kashierRes.providerRefundId) {
+                    await updateTransaction(refundTx.id, {
+                        status: TransactionStatus.PENDING,
+                    }, conn);
+                }
+            } catch (err) {
+                const errMsg = (err as Error).message;
+                logger.error("kashier refund API call failed", {
+                    paymentId,
+                    orderPublicId: order.publicId,
+                    error: errMsg,
+                });
+                await updateTransaction(refundTx.id, {
+                    status: TransactionStatus.FAILED,
+                }, conn);
+                if (errMsg.includes("fully refunded") || errMsg.includes("already refunded")) {
+                    throw PaymentAlreadyRefundedError;
+                }
+                throw PaymentProviderUnavailableError;
+            }
+
+            return RefundResponseDTO.from(refundTx);
+        } else {
+            // Offline / COD refund bookkeeping
+            const refundTx = await createTransaction({
+                region,
+                orderId: order.id,
+                transactionType: TransactionType.REFUND,
+                method: charge.method,
+                providerId: null,
+                providerReferenceId: null,
+                status: TransactionStatus.SUCCEEDED,
+                amount: refundAmountMinor,
+                currency: charge.currency,
+                srcAccId: null,
+                dstAccId: order.customerId,
+                idempotencyKey: idempotencyKey || `refund:${paymentId}:${Date.now()}`,
+            }, conn);
+
+            const isFullyRefunded = (alreadyRefunded + refundAmountMinor) >= charge.amount;
+            await updateTransaction(charge.id, {
+                isRefunded: isFullyRefunded,
+                refundedPaymentId: refundTx.id,
+            }, conn);
+
+            return RefundResponseDTO.from(refundTx);
+        }
+    }
+
+    /**
+     * Admin-only lookup: get transaction ID and payment details by order publicId.
+     */
+    async getByOrderPublicId(publicId: string, region: string) {
+        const conn = db(region);
+        const order = await findOrderByPublicId(publicId, conn);
+        if (!order) throw OrderNotFoundError;
+
+        const charge = await findChargeTransactionByOrderId(order.id, conn);
+        const allTransactions = await findTransactionsByOrderIds([order.id], conn);
+
+        return {
+            orderPublicId: order.publicId,
+            orderId: order.id,
+            paymentId: charge ? charge.id : null,
+            charge: charge ? PaymentResponseDTO.from(charge) : null,
+            transactions: allTransactions.map(PaymentResponseDTO.from),
+        };
     }
 }

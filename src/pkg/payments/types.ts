@@ -38,3 +38,23 @@ export interface VerifyWebhookInput {
     /** the provider's signature header (hex-encoded HMAC-SHA256) */
     signature: string;
 }
+
+export interface RefundInput {
+    /** Kashier order ID or session ID representing the order */
+    kashierOrderId: string;
+    /** Target transaction ID to refund against (optional) */
+    targetTransactionId?: string;
+    /** Refund amount in MAJOR units as a string, e.g. "10.00" */
+    amount: string;
+    /** ISO 4217 currency code, e.g. "EGP" */
+    currency: string;
+    /** Reason for the refund */
+    reason?: string;
+}
+
+export interface RefundResult {
+    /** Provider's internal refund transaction ID if returned synchronously */
+    providerRefundId?: string;
+    /** Raw response body from provider */
+    rawResponse: unknown;
+}

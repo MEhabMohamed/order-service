@@ -12,6 +12,7 @@ export const EVENT_TYPES = {
     ORDER_CANCELLED: "order.cancelled",
     PAYMENT_COMPLETED: "payment.completed",
     PAYMENT_FAILED: "payment.failed",
+    PAYMENT_REFUNDED: "payment.refunded",
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

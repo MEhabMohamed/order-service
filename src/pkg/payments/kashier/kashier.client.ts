@@ -1,6 +1,6 @@
 import { retry } from "../../utils/retry";
 import { IPaymentProvider } from "../payment.interface";
-import { CreateSessionInput, CreateSessionResult, VerifyWebhookInput } from "../types";
+import { CreateSessionInput, CreateSessionResult, RefundInput, RefundResult, VerifyWebhookInput } from "../types";
 import { KashierCreateSessionResponse } from "./types";
 import { verifyWebhookSignature } from "./kashier.signature";
 import { env } from "../../../lib/config/env";
@@ -8,6 +8,7 @@ import { toMs, toSec } from "../../utils/time";
 
 export interface KashierClientConfig {
     baseUrl: string;
+    fepBaseUrl?: string;
     merchantId: string;
     apiKey: string;          // also doubles as webhook HMAC secret
     secretKey: string;       // Authorization header value
@@ -27,6 +28,7 @@ export class KashierClient implements IPaymentProvider {
     constructor(cfg?: KashierClientConfig) {
         this.cfg = cfg ?? {
             baseUrl: env.kashier.baseUrl,
+            fepBaseUrl: env.kashier.fepBaseUrl,
             merchantId: env.kashier.merchantId,
             apiKey: env.kashier.apiKey,
             secretKey: env.kashier.secretKey,
@@ -124,5 +126,60 @@ export class KashierClient implements IPaymentProvider {
     verifyWebhookSignature(signature: string, payload: any): boolean {
         const data = payload?.data ?? payload;
         return verifyWebhookSignature(signature, data, this.cfg.apiKey);
+    }
+
+    async refund(input: RefundInput): Promise<RefundResult> {
+        const body: any = {
+            apiOperation: "REFUND",
+            reason: input.reason ?? "Order refund",
+            transaction: {
+                amount: typeof input.amount === "string" ? parseFloat(input.amount) : input.amount,
+                currency: input.currency,
+            },
+        };
+        if (input.targetTransactionId) {
+            body.transaction.targetTransactionId = input.targetTransactionId;
+        }
+
+        const baseUrl = this.cfg.fepBaseUrl || env.kashier.fepBaseUrl || this.cfg.baseUrl;
+        const response = await retry(
+            async () => {
+                const res = await fetch(`${baseUrl}/v3/orders/${input.kashierOrderId}`, {
+                    method: "PUT",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "accept": "application/json",
+                        "Authorization": this.cfg.secretKey,
+                    },
+                    body: JSON.stringify(body),
+                });
+                if (res.status >= 500) {
+                    throw new Error(`kashier refund ${res.status}: ${await res.text().catch(() => "")}`);
+                }
+                if (!res.ok) {
+                    const text = await res.text().catch(() => "");
+                    const err = new Error(`kashier refund ${res.status}: ${text}`);
+                    (err as any).statusCode = res.status;
+                    (err as any).retryable = false;
+                    throw err;
+                }
+                return await res.json().catch(() => ({}));
+            },
+            {
+                attempts: 3,
+                initialDelayMs: 200,
+                maxDelayMs: 1500,
+                isRetryable: (err) => (err as any)?.retryable !== false,
+            },
+        );
+
+        return {
+            providerRefundId:
+                (response as any)?.response?.transactionId ??
+                (response as any)?.data?.transactionId ??
+                (response as any)?.transactionId ??
+                (response as any)?._id,
+            rawResponse: response,
+        };
     }
 }

@@ -19,6 +19,15 @@ export function requireAgent(req: Request, res: Response, next: NextFunction) {
     next();
 }
 
+/**
+ * Gate routes that may only be called by users with the `system_admin` role.
+ */
+export function requireAdmin(req: Request, res: Response, next: NextFunction) {
+    if (!req.user) return res.status(401).json({error: "User not authenticated"});
+    if (req.user.role !== SYSTEM_ADMIN) return res.status(403).json({error: "Admin role required"});
+    next();
+}
+
 export interface RBACOptions {
     resource: string;
     action: string;

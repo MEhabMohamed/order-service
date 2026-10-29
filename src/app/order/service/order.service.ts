@@ -20,6 +20,9 @@ import { CoreBranchProduct } from "../../../lib/core-client/types";
 import { getCustomerAddress, flattenAddress } from "../../../lib/core-client/address.client";
 import { CoreDataCacheService } from "./core-data-cache.service";
 import { PaymentService } from "../../payment/service/payment.service";
+import { findChargeTransactionByOrderId } from "../../payment/repository/transaction.repo";
+import { TransactionStatus } from "../../payment/enums";
+import { RefundResponseDTO } from "../../payment/dto/refund.dto";
 import { assertTransition } from "./order-status.service";
 import { OrderEntity } from "../entity/order.entity";
 import { OrderItemEntity } from "../entity/order-item.entity";
@@ -54,7 +57,7 @@ import {
 import { insertOutboxEvent } from "../../../lib/events/outbox.repo";
 import { EVENT_TYPES } from "../../../lib/events/event-types";
 
-const SERVICE_FEE_MINOR = 1000; // 10.00 EGP / SAR — paid to the platform.
+const SERVICE_FEE_MINOR = 10; // 10.00 EGP / SAR — paid to the platform.
 
 const RESTAURANT_ORDERS_CACHE_PREFIX = (region: string, branchId: number) =>
     `${region}:GET:/api/restaurant/orders?branchId=${branchId}`;
@@ -311,7 +314,40 @@ export class OrderService {
 
         await this.invalidateBranchOrdersCache(region, order.branchId);
 
-        const payload = OrderStatusResponseDTO.from(updated);
+        // If the order was cancelled, release stock; if cancelled by customer
+        // during the cancellation window on an online payment, trigger Kashier refund.
+        let refundResult: RefundResponseDTO | undefined;
+        if (body.status === OrderStatus.CANCELLED) {
+            const items = await findItemsByOrderIds([order.id], conn);
+            await this.releaseStockSafe(order.branchId, items, order.publicId);
+
+            if (statusActor === StatusActor.CUSTOMER && order.paymentMethod === PaymentMethod.ONLINE) {
+                const charge = await findChargeTransactionByOrderId(order.id, conn);
+                if (charge && !charge.isRefunded && charge.status === TransactionStatus.SUCCEEDED) {
+                    try {
+                        refundResult = await this.paymentService.refund(
+                            charge.id,
+                            { reason: body.reason || "Order cancelled by customer during cancellation window" },
+                            region,
+                            `cancel-refund:${order.publicId}`,
+                        );
+                        logger.info("Triggered Kashier refund for customer-cancelled order", {
+                            orderPublicId: order.publicId,
+                            paymentId: charge.id,
+                            refundId: refundResult.refundId,
+                        });
+                    } catch (err) {
+                        logger.error("Failed to process Kashier refund on customer cancellation", {
+                            orderPublicId: order.publicId,
+                            paymentId: charge.id,
+                            error: (err as Error).message,
+                        });
+                    }
+                }
+            }
+        }
+
+        const payload = OrderStatusResponseDTO.from(updated, refundResult);
         this.io.to(`customer:${updated.customerId}`).emit("order.status_changed", payload);
         this.io.to(`branch:${updated.branchId}`).emit("order.status_changed", payload);
 

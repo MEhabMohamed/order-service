@@ -1,6 +1,7 @@
 import {OrderEntity} from "../entity/order.entity";
 import {OrderItemEntity} from "../entity/order-item.entity";
 import {OrderStatus, PaymentMethod} from "../enums";
+import {RefundResponseDTO} from "../../payment/dto/refund.dto";
 
 export class OrderItemResponseDTO {
     productId!: number;
@@ -97,12 +98,14 @@ export class OrderStatusResponseDTO {
     publicId!: string;
     status!: OrderStatus;
     updatedAt!: string;
+    refund?: RefundResponseDTO;
 
-    static from(order: OrderEntity): OrderStatusResponseDTO {
+    static from(order: OrderEntity, refund?: RefundResponseDTO): OrderStatusResponseDTO {
         const dto = new OrderStatusResponseDTO();
         dto.publicId = order.publicId;
         dto.status = order.status;
         dto.updatedAt = order.updatedAt.toISOString();
+        if (refund) dto.refund = refund;
         return dto;
     }
 }

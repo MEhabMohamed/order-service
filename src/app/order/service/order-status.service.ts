@@ -1,6 +1,7 @@
-import {OrderStatus, StatusActor} from "../enums";
-import {invalidStatusTransitionError, ReasonRequiredError, CancellationWindowExpiredError} from "../errors";
-import {AssertTransitionContext, AssertTransitionResult} from "../types";
+import { toMs } from "../../../pkg/utils/time";
+import { OrderStatus, StatusActor } from "../enums";
+import { invalidStatusTransitionError, ReasonRequiredError, CancellationWindowExpiredError } from "../errors";
+import { AssertTransitionContext, AssertTransitionResult } from "../types";
 
 interface TransitionRule {
     actors: StatusActor[];
@@ -18,32 +19,32 @@ interface TransitionRule {
  */
 const TRANSITIONS: Record<string, Record<string, TransitionRule>> = {
     [OrderStatus.PENDING_PAYMENT]: {
-        [OrderStatus.PLACED]:    {actors: [StatusActor.SYSTEM], stamp: null},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.CUSTOMER, StatusActor.SYSTEM], stamp: "cancelled_at"},
+        [OrderStatus.PLACED]: { actors: [StatusActor.SYSTEM], stamp: null },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.CUSTOMER, StatusActor.SYSTEM], stamp: "cancelled_at" },
     },
     [OrderStatus.PLACED]: {
-        [OrderStatus.ACCEPTED]:  {actors: [StatusActor.RESTAURANT_MEMBER], stamp: "accepted_at"},
-        [OrderStatus.REJECTED]:  {actors: [StatusActor.RESTAURANT_MEMBER], stamp: "rejected_at", requiresReason: true},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.CUSTOMER, StatusActor.RESTAURANT_MEMBER, StatusActor.SYSTEM, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true},
+        [OrderStatus.ACCEPTED]: { actors: [StatusActor.RESTAURANT_MEMBER], stamp: "accepted_at" },
+        [OrderStatus.REJECTED]: { actors: [StatusActor.RESTAURANT_MEMBER], stamp: "rejected_at", requiresReason: true },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.CUSTOMER, StatusActor.RESTAURANT_MEMBER, StatusActor.SYSTEM, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true },
     },
     [OrderStatus.ACCEPTED]: {
-        [OrderStatus.PREPARING]: {actors: [StatusActor.RESTAURANT_MEMBER], stamp: null},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true},
+        [OrderStatus.PREPARING]: { actors: [StatusActor.RESTAURANT_MEMBER], stamp: null },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true },
     },
     [OrderStatus.PREPARING]: {
-        [OrderStatus.READY]:     {actors: [StatusActor.RESTAURANT_MEMBER], stamp: "ready_at"},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true},
+        [OrderStatus.READY]: { actors: [StatusActor.RESTAURANT_MEMBER], stamp: "ready_at" },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true },
     },
     [OrderStatus.READY]: {
-        [OrderStatus.ASSIGNED]:  {actors: [StatusActor.SYSTEM], stamp: "assigned_at"},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true},
+        [OrderStatus.ASSIGNED]: { actors: [StatusActor.SYSTEM], stamp: "assigned_at" },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.RESTAURANT_MEMBER, StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true },
     },
     [OrderStatus.ASSIGNED]: {
-        [OrderStatus.PICKED]:    {actors: [StatusActor.AGENT], stamp: "picked_at"},
-        [OrderStatus.CANCELLED]: {actors: [StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true},
+        [OrderStatus.PICKED]: { actors: [StatusActor.AGENT], stamp: "picked_at" },
+        [OrderStatus.CANCELLED]: { actors: [StatusActor.ADMIN], stamp: "cancelled_at", requiresReason: true },
     },
     [OrderStatus.PICKED]: {
-        [OrderStatus.DELIVERED]: {actors: [StatusActor.AGENT], stamp: "delivered_at"},
+        [OrderStatus.DELIVERED]: { actors: [StatusActor.AGENT], stamp: "delivered_at" },
     },
 };
 
@@ -51,7 +52,7 @@ const TRANSITIONS: Record<string, Record<string, TransitionRule>> = {
  * Customer cancellation has a tight window: until accepted_at is set OR within
  * 60 seconds of placed_at (proxied via created_at on a placed order).
  */
-const CUSTOMER_CANCEL_WINDOW_MS = 60 * 1000;
+const CUSTOMER_CANCEL_WINDOW_MS = toMs.minute(1);
 
 /**
  * Validates a status transition. Throws AppError on illegal transition / missing
@@ -74,5 +75,5 @@ export function assertTransition(from: OrderStatus, to: OrderStatus, ctx: Assert
             throw CancellationWindowExpiredError;
         }
     }
-    return {stamp: allowed.stamp};
+    return { stamp: allowed.stamp };
 }

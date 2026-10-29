@@ -35,6 +35,7 @@ container.registerSingleton<CoreDataCacheService>(TOKENS.CoreDataCacheService, C
 // pkg providers (constructed eagerly with env config)
 const kashierClient = new KashierClient({
     baseUrl: env.kashier.baseUrl,
+    fepBaseUrl: env.kashier.fepBaseUrl,
     merchantId: env.kashier.merchantId,
     apiKey: env.kashier.apiKey,
     secretKey: env.kashier.secretKey,

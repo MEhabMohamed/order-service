@@ -10,11 +10,19 @@ import {OrderStatus} from "../../order/enums";
 import {findOrderByPublicId, updateOrderStatus} from "../../order/repository/order.repo";
 import {findItemsByOrderIds} from "../../order/repository/order-item.repo";
 import {OrderSummaryResponseDTO, OrderStatusResponseDTO} from "../../order/dto/order.response.dto";
+import {toMinor, sumMinor} from "../../../pkg/utils/money";
+import {getForUpdate} from "../../finance/repository/restaurant-balance.repo";
 import {
     findActiveSessionByOrderId,
+    findLatestSessionByOrderId,
     updateSession,
 } from "../repository/payment-session.repo";
-import {createTransaction} from "../repository/transaction.repo";
+import {
+    createTransaction,
+    findChargeTransactionByOrderId,
+    findSuccessfulRefundsByOrderId,
+    updateTransaction,
+} from "../repository/transaction.repo";
 import {recordWebhookOrSkip, markWebhookProcessed} from "../repository/payment-webhook-event.repo";
 import {
     PaymentSessionStatus,
@@ -84,13 +92,20 @@ export class KashierWebhookService {
     }
 
     private async reconcile(envelope: KashierWebhookEnvelope, region: string): Promise<void> {
-        // We only handle 'pay' events in Phase 2. 'refund' is student homework;
-        // 'authorize' / 'void' / 'capture' are out of scope today.
-        if (envelope.event !== "pay") {
-            logger.info("kashier webhook event ignored", {event: envelope.event});
+        if (envelope.event === "pay") {
+            await this.reconcilePay(envelope, region);
             return;
         }
 
+        if (envelope.event === "refund") {
+            await this.reconcileRefund(envelope, region);
+            return;
+        }
+
+        logger.info("kashier webhook event ignored", {event: envelope.event});
+    }
+
+    private async reconcilePay(envelope: KashierWebhookEnvelope, region: string): Promise<void> {
         const conn = db(region);
         const order = await findOrderByPublicId(envelope.data.merchantOrderId, conn);
         if (!order) {
@@ -233,6 +248,180 @@ export class KashierWebhookService {
                     providerReferenceId: envelope.data.transactionId,
                     amount: session.amount,
                     currency: session.currency,
+                    method: "online",
+                    failedAt: new Date().toISOString(),
+                },
+            });
+
+            await trx.commit();
+        } catch (err) {
+            await trx.rollback();
+            throw err;
+        }
+    }
+
+    private async reconcileRefund(envelope: KashierWebhookEnvelope, region: string): Promise<void> {
+        const conn = db(region);
+        const order = await findOrderByPublicId(envelope.data.merchantOrderId, conn);
+        if (!order) {
+            logger.warn("kashier refund webhook for unknown order", {merchantOrderId: envelope.data.merchantOrderId});
+            return;
+        }
+
+        // For refunds, the payment session was already captured, so findLatestSessionByOrderId loads the session.
+        const session = await findLatestSessionByOrderId(order.id, conn);
+        const refundAmountMinor = typeof envelope.data.amount === "number"
+            ? toMinor(envelope.data.amount)
+            : session?.amount ?? order.total;
+
+        const trx = await conn.transaction();
+        try {
+            if (envelope.data.status === "SUCCESS") {
+                const charge = await findChargeTransactionByOrderId(order.id, trx);
+
+                const refundTx = await createTransaction({
+                    region,
+                    orderId: order.id,
+                    transactionType: TransactionType.REFUND,
+                    method: TransactionMethod.ONLINE,
+                    providerId: KASHIER_PROVIDER_ID,
+                    providerReferenceId: envelope.data.transactionId,
+                    status: TransactionStatus.SUCCEEDED,
+                    amount: refundAmountMinor,
+                    currency: envelope.data.currency || order.currency,
+                    srcAccId: null, // Denotes platform/system
+                    dstAccId: order.customerId,
+                    idempotencyKey: `kashier:refund:${envelope.data.transactionId}`,
+                }, trx);
+
+                if (charge) {
+                    const existingRefunds = await findSuccessfulRefundsByOrderId(order.id, trx);
+                    const totalRefunded = sumMinor(existingRefunds.map((r) => r.amount));
+                    const isFullyRefunded = totalRefunded >= charge.amount;
+
+                    await updateTransaction(charge.id, {
+                        isRefunded: isFullyRefunded,
+                        refundedPaymentId: refundTx.id,
+                    }, trx);
+                }
+
+                // If the order was already delivered, settlement previously credited the restaurant balance.
+                // Debit the restaurant balance up to current balance (and record surplus as adjustment if any).
+                if (order.status === OrderStatus.DELIVERED) {
+                    const balanceRow = await getForUpdate(Number(order.restaurantId), order.currency, trx);
+                    if (balanceRow) {
+                        const debitAmount = Math.min(balanceRow.balance, refundAmountMinor);
+                        const surplusAdjustment = refundAmountMinor - debitAmount;
+
+                        if (debitAmount > 0) {
+                            await trx("restaurant_balances")
+                                .where({restaurant_id: order.restaurantId, currency: order.currency})
+                                .update({
+                                    balance: trx.raw("balance - ?", [debitAmount]),
+                                    updated_at: trx.fn.now(),
+                                });
+                        }
+
+                        if (surplusAdjustment > 0) {
+                            await createTransaction({
+                                region,
+                                orderId: order.id,
+                                transactionType: TransactionType.ADJUSTMENT,
+                                method: TransactionMethod.SYSTEM,
+                                providerId: null,
+                                providerReferenceId: `adj:${envelope.data.transactionId}`,
+                                status: TransactionStatus.SUCCEEDED,
+                                amount: surplusAdjustment,
+                                currency: order.currency,
+                                srcAccId: null,
+                                dstAccId: order.restaurantOwnerId,
+                                idempotencyKey: `kashier:adj:${envelope.data.transactionId}`,
+                            }, trx);
+                        }
+                    }
+                }
+
+                if (session) {
+                    await updateSession(session.id, {
+                        status: session.status,
+                        rawLastPayload: envelope,
+                    }, trx);
+                }
+
+                await insertOutboxEvent(trx, {
+                    aggregateType: "payment",
+                    aggregateId: order.publicId,
+                    eventType: EVENT_TYPES.PAYMENT_REFUNDED,
+                    payload: {
+                        orderId: order.publicId,
+                        region,
+                        restaurantId: Number(order.restaurantId),
+                        branchId: Number(order.branchId),
+                        customerId: Number(order.customerId),
+                        provider: "kashier",
+                        providerReferenceId: envelope.data.transactionId,
+                        amount: refundAmountMinor,
+                        currency: envelope.data.currency || order.currency,
+                        method: "online",
+                        refundedAt: new Date().toISOString(),
+                    },
+                });
+
+                await trx.commit();
+
+                // WS announcements after commit
+                this.io.to(`customer:${order.customerId}`).emit("payment.refunded", {
+                    orderId: order.publicId,
+                    amount: refundAmountMinor,
+                    currency: envelope.data.currency || order.currency,
+                    status: "succeeded",
+                });
+                this.io.to(`branch:${order.branchId}`).emit("payment.refunded", {
+                    orderId: order.publicId,
+                    amount: refundAmountMinor,
+                    currency: envelope.data.currency || order.currency,
+                    status: "succeeded",
+                });
+                return;
+            }
+
+            // FAILED branch — record failed refund for audit
+            await createTransaction({
+                region,
+                orderId: order.id,
+                transactionType: TransactionType.REFUND,
+                method: TransactionMethod.ONLINE,
+                providerId: KASHIER_PROVIDER_ID,
+                providerReferenceId: envelope.data.transactionId,
+                status: TransactionStatus.FAILED,
+                amount: refundAmountMinor,
+                currency: envelope.data.currency || order.currency,
+                srcAccId: null,
+                dstAccId: order.customerId,
+                idempotencyKey: `kashier:refund:${envelope.data.transactionId}`,
+            }, trx);
+
+            if (session) {
+                await updateSession(session.id, {
+                    status: session.status,
+                    rawLastPayload: envelope,
+                }, trx);
+            }
+
+            await insertOutboxEvent(trx, {
+                aggregateType: "payment",
+                aggregateId: order.publicId,
+                eventType: EVENT_TYPES.PAYMENT_FAILED,
+                payload: {
+                    orderId: order.publicId,
+                    region,
+                    restaurantId: Number(order.restaurantId),
+                    branchId: Number(order.branchId),
+                    customerId: Number(order.customerId),
+                    provider: "kashier",
+                    providerReferenceId: envelope.data.transactionId,
+                    amount: refundAmountMinor,
+                    currency: envelope.data.currency || order.currency,
                     method: "online",
                     failedAt: new Date().toISOString(),
                 },
