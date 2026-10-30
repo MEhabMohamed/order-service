@@ -1,17 +1,18 @@
-import {Request, Response, NextFunction} from "express";
-import {injectable, inject} from "tsyringe";
-import {TOKENS} from "../../../lib/di/tokens";
-import {sendSuccess} from "../../../lib/http/response";
-import {validateBody} from "../../../lib/validation/validate";
-import {RegionNotResolvedError} from "../../../lib/sharding/errors";
-import {FinanceService} from "../service/finance.service";
-import {CreatePayoutRequestDTO} from "../dto/finance.request.dto";
+import { Request, Response, NextFunction } from "express";
+import { injectable, inject } from "tsyringe";
+import { TOKENS } from "../../../lib/di/tokens";
+import { sendSuccess } from "../../../lib/http/response";
+import { validateBody } from "../../../lib/validation/validate";
+import { RegionNotResolvedError } from "../../../lib/sharding/errors";
+import { FinanceService } from "../service/finance.service";
+import { CreatePayoutRequestDTO } from "../dto/finance.request.dto";
+import { toMs } from "../../../pkg/utils/time";
 
 const PAYOUT_LIST_LIMIT = 50;
 
 @injectable()
 export class FinanceController {
-    constructor(@inject(TOKENS.FinanceService) private readonly finance: FinanceService) {}
+    constructor(@inject(TOKENS.FinanceService) private readonly finance: FinanceService) { }
 
     getBalance = async (req: Request, res: Response, next: NextFunction) => {
         try {
@@ -29,7 +30,7 @@ export class FinanceController {
             if (!req.region || req.region === "all") throw RegionNotResolvedError;
             const restaurantId = Number(req.params.restaurantId);
             const now = new Date();
-            const defaultFrom = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+            const defaultFrom = new Date(now.getTime() - toMs.month(3));
             const from = req.query.from ? new Date(String(req.query.from)) : defaultFrom;
             const to = req.query.to ? new Date(String(req.query.to)) : now;
             const items = await this.finance.listPayouts(restaurantId, req.region, from, to, PAYOUT_LIST_LIMIT);

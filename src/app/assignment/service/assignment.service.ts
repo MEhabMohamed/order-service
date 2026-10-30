@@ -1,28 +1,29 @@
-import {injectable, inject} from "tsyringe";
-import {Server as IoServer} from "socket.io";
-import {container} from "../../../lib/di/container";
-import {TOKENS} from "../../../lib/di/tokens";
-import {env} from "../../../lib/config/env";
-import {db} from "../../../lib/knex/knex";
-import {logger} from "../../../lib/logger/logger";
-import {ICacheProvider} from "../../../pkg/cache/cache.interface";
-import {getBranch} from "../../../lib/core-client/branch.client";
-import {OrderEntity} from "../../order/entity/order.entity";
-import {findOrderByPublicId, findReadyUnassigned, claimReadyOrderForAgent} from "../../order/repository/order.repo";
-import {OrderStatusResponseDTO} from "../../order/dto/order.response.dto";
-import {DeliveryTaskResponseDTO} from "../../agent/dto/agent.response.dto";
-import {PresenceService} from "../../agent/service/presence.service";
+import { injectable, inject } from "tsyringe";
+import { Server as IoServer } from "socket.io";
+import { container } from "../../../lib/di/container";
+import { TOKENS } from "../../../lib/di/tokens";
+import { env } from "../../../lib/config/env";
+import { db } from "../../../lib/knex/knex";
+import { logger } from "../../../lib/logger/logger";
+import { ICacheProvider } from "../../../pkg/cache/cache.interface";
+import { getBranch } from "../../../lib/core-client/branch.client";
+import { OrderEntity } from "../../order/entity/order.entity";
+import { findOrderByPublicId, findReadyUnassigned, claimReadyOrderForAgent } from "../../order/repository/order.repo";
+import { OrderStatusResponseDTO } from "../../order/dto/order.response.dto";
+import { DeliveryTaskResponseDTO } from "../../agent/dto/agent.response.dto";
+import { PresenceService } from "../../agent/service/presence.service";
 import {
     OfferNotFoundOrExpiredError,
     NotInCandidateListError,
     OrderAlreadyClaimedError,
     OrderNotInReadyStateError,
 } from "../../agent/errors";
+import { toSec } from "../../../pkg/utils/time";
 
 interface OfferPayload {
     orderId: string;            // public_id
-    branch: {id: number; lat: number; lng: number; name: string; addressText: string};
-    dropoff: {lat: number; lng: number; addressText: string};
+    branch: { id: number; lat: number; lng: number; name: string; addressText: string };
+    dropoff: { lat: number; lng: number; addressText: string };
     total: number;
     currency: string;
     paymentMethod: string;
@@ -34,7 +35,7 @@ export class AssignmentService {
     constructor(
         @inject(TOKENS.CacheProvider) private readonly cache: ICacheProvider,
         @inject(TOKENS.PresenceService) private readonly presence: PresenceService,
-    ) {}
+    ) { }
 
     private get io(): IoServer {
         return container.resolve<IoServer>(TOKENS.WsServer);
@@ -51,20 +52,20 @@ export class AssignmentService {
     }
 
     /** Worker entrypoint: process up to BATCH ready orders for a region. */
-    async tickRegion(region: string): Promise<{processed: number; offered: number; skipped: number}> {
+    async tickRegion(region: string): Promise<{ processed: number; offered: number; skipped: number }> {
         const conn = db(region);
         const orders = await findReadyUnassigned(env.delivery.batch, conn);
         let offered = 0;
         let skipped = 0;
         for (const o of orders) {
             const result = await this.tryAssign(o, region).catch((err) => {
-                logger.error("tryAssign failed", {publicId: o.publicId, error: (err as Error).message});
+                logger.error("tryAssign failed", { publicId: o.publicId, error: (err as Error).message });
                 return "error" as const;
             });
             if (result === "offered") offered++;
             else skipped++;
         }
-        return {processed: orders.length, offered, skipped};
+        return { processed: orders.length, offered, skipped };
     }
 
     /**
@@ -79,7 +80,7 @@ export class AssignmentService {
         const attemptsRaw = await this.cache.get(AssignmentService.attemptsKey(order.publicId));
         const attempts = Number(attemptsRaw ?? 0);
         if (attempts >= env.delivery.maxAttempts) {
-            this.io.to("admin:alerts").emit("assignment.exhausted", {orderId: order.publicId, attempts});
+            this.io.to("admin:alerts").emit("assignment.exhausted", { orderId: order.publicId, attempts });
             // extend to update the orders table to alert the restaurat that the order cant be assigned or rely on created_At stamp
             return "exhausted";
         }
@@ -90,7 +91,7 @@ export class AssignmentService {
         const candidates = await this.findCandidates(region, order.branchLng, order.branchLat);
         if (candidates.length === 0) {
             await this.cache.incr(AssignmentService.attemptsKey(order.publicId));
-            await this.cache.expire(AssignmentService.attemptsKey(order.publicId), 3600);
+            await this.cache.expire(AssignmentService.attemptsKey(order.publicId), toSec.hour(1));
             return "no-candidates";
         }
 
@@ -120,7 +121,7 @@ export class AssignmentService {
                 name: branch?.name ?? "",
                 addressText: branch?.addressText ?? "",
             },
-            dropoff: {lat: order.deliveryLat, lng: order.deliveryLng, addressText: order.deliveryAddressTextSnapshot},
+            dropoff: { lat: order.deliveryLat, lng: order.deliveryLng, addressText: order.deliveryAddressTextSnapshot },
             total: order.total,
             currency: order.currency,
             paymentMethod: order.paymentMethod,
@@ -130,7 +131,7 @@ export class AssignmentService {
         for (const agentId of candidates) {
             this.io.to(`agent:${agentId}`).emit("task.offered", payload);
         }
-        logger.info("assignment.broadcast", {publicId: order.publicId, candidates, attempts: attempts + 1});
+        logger.info("assignment.broadcast", { publicId: order.publicId, candidates, attempts: attempts + 1 });
         return "offered";
     }
 
@@ -186,7 +187,7 @@ export class AssignmentService {
 
         this.io.to(`agent:${agentId}`).emit("task.assigned", taskDto);
         for (const loser of losers) {
-            this.io.to(`agent:${loser}`).emit("offer.cancelled", {orderId: publicId, reason: "claimed_by_other"});
+            this.io.to(`agent:${loser}`).emit("offer.cancelled", { orderId: publicId, reason: "claimed_by_other" });
         }
         this.io.to(`customer:${updated.customerId}`).emit("order.status_changed", statusDto);
         this.io.to(`branch:${updated.branchId}`).emit("order.status_changed", statusDto);

@@ -42,8 +42,8 @@ export class KashierClient implements IPaymentProvider {
 
     async createSession(input: CreateSessionInput & { orderPublicId?: string; defaultMethod?: string }): Promise<CreateSessionResult & { sessionId?: string; sessionUrl?: string }> {
         const expireAt = new Date(Date.now() + toMs.second(this.cfg.sessionTimeoutSec)).toISOString();
-        const amount = typeof input.amount === "number" && input.orderPublicId
-            ? (input.amount / 100).toFixed(2)
+        const amount = typeof input.amount === "number"
+            ? Number(input.amount).toFixed(2)
             : input.amount;
 
         const body: any = {

@@ -81,7 +81,7 @@ export class PaymentService {
         try {
             providerResp = await this.kashier.createSession({
                 merchantOrderId: order.publicId,
-                amount: fromMinor(order.total).toFixed(2),
+                amount: Number(order.total).toFixed(2),
                 currency: order.currency,
                 description: `QuickBite order ${order.publicId}`,
                 allowedMethods: "card,wallet",
@@ -218,7 +218,7 @@ export class PaymentService {
                 const kashierRes = await this.kashier.refund({
                     kashierOrderId,
                     targetTransactionId: charge.providerReferenceId || undefined,
-                    amount: fromMinor(refundAmountMinor).toFixed(2),
+                    amount: Number(refundAmountMinor).toFixed(2),
                     currency: charge.currency,
                     reason: dto.reason,
                 });

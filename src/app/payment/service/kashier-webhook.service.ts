@@ -271,7 +271,7 @@ export class KashierWebhookService {
         // For refunds, the payment session was already captured, so findLatestSessionByOrderId loads the session.
         const session = await findLatestSessionByOrderId(order.id, conn);
         const refundAmountMinor = typeof envelope.data.amount === "number"
-            ? toMinor(envelope.data.amount)
+            ? envelope.data.amount
             : session?.amount ?? order.total;
 
         const trx = await conn.transaction();

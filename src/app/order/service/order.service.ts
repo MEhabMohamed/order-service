@@ -57,7 +57,7 @@ import {
 import { insertOutboxEvent } from "../../../lib/events/outbox.repo";
 import { EVENT_TYPES } from "../../../lib/events/event-types";
 
-const SERVICE_FEE_MINOR = 10; // 10.00 EGP / SAR — paid to the platform.
+const SERVICE_FEE = 10; // 10 EGP — paid to the platform.
 
 const RESTAURANT_ORDERS_CACHE_PREFIX = (region: string, branchId: number) =>
     `${region}:GET:/api/restaurant/orders?branchId=${branchId}`;
@@ -103,8 +103,9 @@ export class OrderService {
 
         // 4. Money
         const subtotal = sumMinor(orderLineDrafts.map((l) => l.lineTotal));
-        const deliveryFee = Number(branch.deliveryFee ?? 10);
-        const total = subtotal + deliveryFee + SERVICE_FEE_MINOR;
+        const rawDeliveryFee = Number(branch.deliveryFee ?? 0);
+        const deliveryFee = rawDeliveryFee > 0 ? rawDeliveryFee : 10;
+        const total = subtotal + deliveryFee + SERVICE_FEE;
 
         // 5. Reserve stock FIRST. If anything below this point fails, we MUST release.
         // Reserve is atomic on the core side (FOR UPDATE + 409 on underflow) so we
@@ -141,7 +142,7 @@ export class OrderService {
                 status: body.paymentMethod === PaymentMethod.ONLINE ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
                 subtotal,
                 deliveryFee,
-                serviceFee: SERVICE_FEE_MINOR,
+                serviceFee: SERVICE_FEE,
                 total,
                 currency: branch.currency as Currency,
                 paymentMethod: body.paymentMethod,
@@ -375,11 +376,12 @@ export class OrderService {
                 unavailableItems.push({ productId: it.productId, requested: it.quantity, available: p.stock });
                 continue;
             }
+            const unitPrice = Number(p.price);
             drafts.push({
                 productId: it.productId,
                 quantity: it.quantity,
-                unitPrice: p.price,
-                lineTotal: multiplyMinor(p.price, it.quantity),
+                unitPrice,
+                lineTotal: multiplyMinor(unitPrice, it.quantity),
                 name: p.name,
                 imageUrl: p.imageUrl,
             });
