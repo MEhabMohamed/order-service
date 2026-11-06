@@ -96,6 +96,39 @@ export async function createTransactionIdempotent(input: CreateTransactionInput,
     return toEntity(rows[0]);
 }
 
+/**
+ * Bulk idempotent insert — single INSERT with N rows so settlement does not
+ * pay N round-trips to Postgres when booking cod_collection, commission,
+ * service-fee, and delivery-fee ledger entries.
+ */
+export async function bulkCreateTransactionsIdempotent(
+    inputs: CreateTransactionInput[],
+    conn: Knex,
+): Promise<TransactionEntity[]> {
+    if (inputs.length === 0) return [];
+    const rows = await conn("transactions")
+        .insert(
+            inputs.map((input) => ({
+                region: input.region,
+                order_id: input.orderId,
+                transaction_type: input.transactionType,
+                method: input.method,
+                provider_id: input.providerId,
+                provider_reference_id: input.providerReferenceId,
+                status: input.status,
+                amount: input.amount,
+                currency: input.currency,
+                src_acc_id: input.srcAccId,
+                dst_acc_id: input.dstAccId,
+                idempotency_key: input.idempotencyKey,
+            })),
+        )
+        .onConflict("idempotency_key")
+        .ignore()
+        .returning(TRANSACTION_COLUMNS as unknown as string[]);
+    return rows.map(toEntity);
+}
+
 export async function findTransactionById(id: number, conn: Knex): Promise<TransactionEntity | undefined> {
     const row = await conn("transactions")
         .select(TRANSACTION_COLUMNS as unknown as string[])

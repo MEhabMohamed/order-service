@@ -483,12 +483,15 @@ function buildOrderTransitionPayload(order: OrderEntity, reason: string | undefi
     return {
         orderId: order.publicId,
         region: order.region,
+        countryCode: order.countryCode,
         restaurantId: Number(order.restaurantId),
         branchId: Number(order.branchId),
         customerId: Number(order.customerId),
         status: order.status,
+        currency: order.currency,
         reason: reason ?? null,
         actor,
+        placedAt: order.createdAt.toISOString(),
         occurredAt: order.updatedAt.toISOString(),
     };
 }

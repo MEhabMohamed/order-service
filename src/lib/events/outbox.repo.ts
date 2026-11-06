@@ -54,9 +54,24 @@ export async function markDispatched(conn: Knex, id: string): Promise<void> {
     await conn("events_outbox").where({ id }).update({ dispatched_at: new Date() });
 }
 
+export async function markDispatchedBatch(conn: Knex, ids: string[]): Promise<void> {
+    if (ids.length === 0) return;
+    await conn("events_outbox").whereIn("id", ids).update({ dispatched_at: new Date() });
+}
+
 export async function markFailed(conn: Knex, id: string, err: string): Promise<void> {
     await conn("events_outbox")
         .where({ id })
+        .update({
+            attempts: conn.raw("attempts + 1"),
+            last_error: err.slice(0, 2000),
+        });
+}
+
+export async function markFailedBatch(conn: Knex, ids: string[], err: string): Promise<void> {
+    if (ids.length === 0) return;
+    await conn("events_outbox")
+        .whereIn("id", ids)
         .update({
             attempts: conn.raw("attempts + 1"),
             last_error: err.slice(0, 2000),

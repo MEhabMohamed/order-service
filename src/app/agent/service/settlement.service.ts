@@ -11,7 +11,8 @@ import {OrderEntity} from "../../order/entity/order.entity";
 import {OrderStatus, PaymentMethod} from "../../order/enums";
 import {findOrderByPublicId, updateOrderStatus, updateOrderCommission} from "../../order/repository/order.repo";
 import {OrderStatusResponseDTO} from "../../order/dto/order.response.dto";
-import {createTransactionIdempotent} from "../../payment/repository/transaction.repo";
+import {bulkCreateTransactionsIdempotent} from "../../payment/repository/transaction.repo";
+import {CreateTransactionInput} from "../../payment/types";
 import {TransactionType, TransactionMethod, TransactionStatus} from "../../payment/enums";
 import {upsertIncrement} from "../../finance/repository/restaurant-balance.repo";
 import {insertEarning} from "../repository/agent-earning.repo";
@@ -70,9 +71,11 @@ export class SettlementService {
             // Stamp commission FIRST so subsequent writes see the right number.
             await updateOrderCommission(publicId, commission, trx);
 
+            const ledgerInputs: CreateTransactionInput[] = [];
+
             // For COD, write the charge transaction now (succeeded; the agent took the cash).
             if (order.paymentMethod === PaymentMethod.COD) {
-                await createTransactionIdempotent({
+                ledgerInputs.push({
                     region,
                     orderId: order.id,
                     transactionType: TransactionType.COD_COLLECTION,
@@ -85,12 +88,12 @@ export class SettlementService {
                     srcAccId: order.customerId,
                     dstAccId: order.restaurantOwnerId,
                     idempotencyKey: `cod-collect:${order.publicId}`,
-                }, trx);
+                });
             }
 
             // Commission: src=restaurant owner, dst=NULL (platform — no user record).
             if (commission > 0) {
-                await createTransactionIdempotent({
+                ledgerInputs.push({
                     region,
                     orderId: order.id,
                     transactionType: TransactionType.COMMISSION,
@@ -103,7 +106,7 @@ export class SettlementService {
                     srcAccId: order.restaurantOwnerId,
                     dstAccId: null,
                     idempotencyKey: `commission:${order.publicId}`,
-                }, trx);
+                });
             }
 
             // Service fee: customer paid it as part of `total`. For COD the
@@ -111,7 +114,7 @@ export class SettlementService {
             // the service fee is owed back to the platform. Book the
             // restaurant → platform transfer explicitly so finance reconciles.
             if (order.serviceFee > 0) {
-                await createTransactionIdempotent({
+                ledgerInputs.push({
                     region,
                     orderId: order.id,
                     transactionType: TransactionType.ADJUSTMENT,
@@ -124,14 +127,14 @@ export class SettlementService {
                     srcAccId: order.restaurantOwnerId,
                     dstAccId: null,
                     idempotencyKey: `service-fee:${order.publicId}`,
-                }, trx);
+                });
             }
 
             // Delivery fee: same story — customer paid it inside `total`, it's
             // not the restaurant's money. Book restaurant → platform; the
             // agent's share is paid out separately via agent_earnings.
             if (order.deliveryFee > 0) {
-                await createTransactionIdempotent({
+                ledgerInputs.push({
                     region,
                     orderId: order.id,
                     transactionType: TransactionType.ADJUSTMENT,
@@ -144,8 +147,11 @@ export class SettlementService {
                     srcAccId: order.restaurantOwnerId,
                     dstAccId: null,
                     idempotencyKey: `delivery-fee:${order.publicId}`,
-                }, trx);
+                });
             }
+
+            // Single multi-row INSERT for all settlement ledger entries (no N+1).
+            await bulkCreateTransactionsIdempotent(ledgerInputs, trx);
 
             // Restaurant balance: net of commission.
             const netToRestaurant = order.subtotal - commission;
@@ -180,6 +186,7 @@ export class SettlementService {
                 payload: {
                     orderId: updated.publicId,
                     region: updated.region,
+                    countryCode: updated.countryCode,
                     restaurantId: Number(updated.restaurantId),
                     branchId: Number(updated.branchId),
                     customerId: Number(updated.customerId),
@@ -190,6 +197,7 @@ export class SettlementService {
                     commission,
                     currency: updated.currency,
                     paymentMethod: updated.paymentMethod,
+                    placedAt: updated.createdAt.toISOString(),
                     deliveredAt: updated.deliveredAt?.toISOString() ?? new Date().toISOString(),
                 },
             });

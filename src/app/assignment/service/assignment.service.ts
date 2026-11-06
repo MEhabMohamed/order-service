@@ -258,7 +258,7 @@ export class AssignmentService {
         return taskDto;
     }
 
-    /** GEOSEARCH + filter by presence:meta TTL + filter out busy agents. */
+    /** GEOSEARCH + filter by presence:meta TTL + filter out busy agents (batched concurrently, no sequential N+1 loop). */
     private async findCandidates(region: string, lng: number, lat: number): Promise<number[]> {
         const overscan = env.delivery.candidates * 4;
         const raw = await this.cache.geosearchByRadius(
@@ -269,15 +269,21 @@ export class AssignmentService {
             overscan,
         );
 
-        const result: number[] = [];
-        for (const idStr of raw) {
-            const agentId = Number(idStr);
-            if (!Number.isFinite(agentId)) continue;
-            if (!(await this.cache.exists(PresenceService.metaKey(region, agentId)))) continue;
-            if (await this.cache.sismember(PresenceService.busyKey(region), idStr)) continue;
-            result.push(agentId);
-            if (result.length >= env.delivery.candidates) break;
-        }
-        return result;
+        const validEntries = raw
+            .map((idStr) => ({ idStr, agentId: Number(idStr) }))
+            .filter((e) => Number.isFinite(e.agentId));
+        if (validEntries.length === 0) return [];
+
+        const checks = await Promise.all(
+            validEntries.map(async ({ idStr, agentId }) => {
+                const [online, busy] = await Promise.all([
+                    this.cache.exists(PresenceService.metaKey(region, agentId)),
+                    this.cache.sismember(PresenceService.busyKey(region), idStr),
+                ]);
+                return online && !busy ? agentId : null;
+            }),
+        );
+
+        return checks.filter((id): id is number => id !== null).slice(0, env.delivery.candidates);
     }
 }
