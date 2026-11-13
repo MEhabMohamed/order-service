@@ -13,7 +13,7 @@ const baseSchema = z.object({
     ACCESS_EXPIRES_IN: z.string().default("3600"),
     REFRESH_EXPIRES_IN: z.string().default("604800"),
 
-    CORS_ORIGINS: z.string().default("http://localhost:3000"),
+    CORS_ORIGINS: z.string().default("http://localhost:4000"),
 
     REGIONS: z.string().min(1),
 
@@ -62,7 +62,7 @@ const baseSchema = z.object({
     ASSIGNMENT_TICK_SEC: z.string().default("10"),
     ASSIGNMENT_RADIUS_METERS: z.string().default("5000"),
     ASSIGNMENT_CANDIDATES: z.string().default("5"),
-    ASSIGNMENT_OFFER_TTL_SEC: z.string().default("30"),
+    ASSIGNMENT_OFFER_TTL_SEC: z.string().default("120"),
     ASSIGNMENT_CLAIM_TTL_SEC: z.string().default("300"),
     ASSIGNMENT_MAX_ATTEMPTS: z.string().default("3"),
     ASSIGNMENT_BATCH: z.string().default("20"),
