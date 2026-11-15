@@ -6,6 +6,7 @@ dist/
 .idea/
 .vscode/
 docs/
+.env.test
 
 # local experimentation scripts — not tracked
 play/
