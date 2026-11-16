@@ -1,0 +1,5 @@
+CREATE DATABASE order_service_eg;
+CREATE DATABASE order_service_ksa;
+CREATE DATABASE order_service_archive_eg;
+CREATE DATABASE order_service_archive_ksa;
+
