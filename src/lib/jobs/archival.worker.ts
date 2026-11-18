@@ -1,182 +1,163 @@
 import { db, dbArchive } from "../knex/knex";
-import { redisClient } from "../cache/init";
-import { logger } from "../logger/logger";
 import { env } from "../config/env";
-import { toMs, toSec } from "../../pkg/utils/time";
+import { logger } from "../logger/logger";
+import { cacheProvider } from "../cache/init";
 import { register } from "./job-registry";
+import { ArchivalTable, ArchiveRunOptions, ArchiveRunResult } from "./archival.types";
 
-export async function runArchival(
-    targetRegion?: string
-): Promise<{ archivedOrders: number; archivedTransactions: number }> {
-    const regions = targetRegion ? [targetRegion] : env.regions;
-    let totalArchivedOrders = 0;
-    let totalArchivedTransactions = 0;
+/**
+ * Cold-archival worker.
+ *
+ * Every night, move rows whose creation timestamp falls in a PRIOR YEAR from
+ * the hot cluster to the archive cluster, per region, keeping the hot DB small
+ * enough that current-year queries stay fast.
+ *
+ * Safety model:
+ *   - Tables are swept children-first so a crash never strands a child whose
+ *     parent is already gone.
+ *   - Each batch copies to the archive and commits there FIRST, then deletes
+ *     from hot. A crash between the two leaves the row in BOTH places (safe);
+ *     the re-run re-inserts with ON CONFLICT DO NOTHING (no duplicates) and the
+ *     delete eventually removes it from hot.
+ *   - A Redis lock (`archival:<region>:lock`) stops two processes running the
+ *     same region's sweep concurrently.
+ */
 
-    const currentYear = new Date().getUTCFullYear();
-    const cutoffDate = new Date(Date.UTC(currentYear, 0, 1, 0, 0, 0, 0));
+// FK-safe order: children before parents. `tsColumn` is the per-table "created"
+// timestamp — they are deliberately not uniform (see schema migrations).
+const ARCHIVAL_TABLES: ArchivalTable[] = [
+    { name: "agent_earnings", tsColumn: "earned_at" },
+    { name: "payment_webhook_events", tsColumn: "received_at" },
+    { name: "payment_sessions", tsColumn: "created_at" },
+    { name: "transactions", tsColumn: "created_at" },
+    { name: "order_items", tsColumn: "created_at" },
+    { name: "orders", tsColumn: "created_at" },
+];
 
-    for (const region of regions) {
-        const lockKey = `archival:${region}:lock`;
-        // Acquire distributed lock for 1 hour (3600 seconds)
-        const acquired = await redisClient.set(lockKey, "1", "EX", toSec.hour(1), "NX").catch(() => null);
-        if (!acquired) {
-            logger.info("Archival skipped — lock already held by another worker", { region });
-            continue;
-        }
-
-        try {
-            logger.info("Starting cold archival run", { region, cutoffDate: cutoffDate.toISOString() });
-            const hot = db(region);
-            const archive = dbArchive(region);
-
-            let hasMoreOrders = true;
-            while (hasMoreOrders) {
-                // Fetch completed orders older than cutoffDate
-                const eligibleOrders = await hot("orders")
-                    .where("created_at", "<", cutoffDate)
-                    .whereIn("status", ["delivered", "cancelled", "rejected"])
-                    .orderBy("id", "asc")
-                    .limit(1000)
-                    .catch((err) => {
-                        logger.warn("Could not query hot orders for archival", { error: err.message });
-                        return [];
-                    });
-
-                if (eligibleOrders.length === 0) {
-                    hasMoreOrders = false;
-                    break;
-                }
-
-                const orderIds = eligibleOrders.map((o: any) => o.id);
-
-                // Fetch child records
-                const items = await hot("order_items").whereIn("order_id", orderIds).catch(() => []);
-                const txs = await hot("transactions").whereIn("order_id", orderIds).catch(() => []);
-                const earnings = await hot("agent_earnings").whereIn("order_id", orderIds).catch(() => []);
-
-                // Copy to Archive (parent first, then children to satisfy FK constraints)
-                try {
-                    await archive("orders").insert(eligibleOrders).onConflict(["id", "created_at"]).ignore();
-                    if (items.length > 0) {
-                        await archive("order_items").insert(items).onConflict(["id", "order_created_at"]).ignore();
-                    }
-                    if (txs.length > 0) {
-                        await archive("transactions").insert(txs).onConflict("id").ignore();
-                    }
-                    if (earnings.length > 0) {
-                        await archive("agent_earnings").insert(earnings).onConflict("id").ignore();
-                    }
-                } catch (archiveErr: any) {
-                    logger.error("Failed writing records to archive shard", { region, error: archiveErr.message });
-                    break; // abort this batch to prevent premature deletion from hot
-                }
-
-                // Prune from Hot (children first, then parent to satisfy FK constraints)
-                if (earnings.length > 0) {
-                    await hot("agent_earnings").whereIn("id", earnings.map((e: any) => e.id)).delete().catch(() => { });
-                }
-                if (txs.length > 0) {
-                    await hot("transactions").whereIn("id", txs.map((t: any) => t.id)).delete().catch(() => { });
-                }
-                if (items.length > 0) {
-                    await hot("order_items").whereIn("id", items.map((i: any) => i.id)).delete().catch(() => { });
-                }
-                await hot("orders").whereIn("id", orderIds).delete().catch(() => { });
-
-                totalArchivedOrders += eligibleOrders.length;
-                if (eligibleOrders.length < 1000) {
-                    hasMoreOrders = false;
-                }
-            }
-
-            // Archival of standalone transactions (payouts or adjustments without order_id)
-            let hasMoreTxs = true;
-            while (hasMoreTxs) {
-                const eligibleTxs = await hot("transactions")
-                    .where("created_at", "<", cutoffDate)
-                    .whereNull("order_id")
-                    .orderBy("id", "asc")
-                    .limit(1000)
-                    .catch(() => []);
-
-                if (eligibleTxs.length === 0) {
-                    hasMoreTxs = false;
-                    break;
-                }
-
-                try {
-                    await archive("transactions").insert(eligibleTxs).onConflict("id").ignore();
-                    await hot("transactions").whereIn("id", eligibleTxs.map((t: any) => t.id)).delete();
-                    totalArchivedTransactions += eligibleTxs.length;
-                } catch (txArchiveErr: any) {
-                    logger.warn("Archival of standalone transactions failed", { error: txArchiveErr.message });
-                    break;
-                }
-
-                if (eligibleTxs.length < 1000) {
-                    hasMoreTxs = false;
-                }
-            }
-
-            logger.info("Cold archival run complete", { region, totalArchivedOrders, totalArchivedTransactions });
-        } catch (err: any) {
-            logger.error("Archival run encountered error", { region, error: err.message });
-        } finally {
-            await redisClient.del(lockKey).catch(() => { });
+/**
+ * pg returns JSONB columns as parsed JS objects/arrays and timestamps as Date
+ * objects. Re-inserting a parsed object into a JSONB column via knex would
+ * stringify it as `[object Object]`, so JSON-encode plain objects/arrays while
+ * leaving Dates, Buffers, and scalars untouched.
+ */
+function serializeRowForInsert(row: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(row)) {
+        if (
+            value !== null &&
+            typeof value === "object" &&
+            !(value instanceof Date) &&
+            !Buffer.isBuffer(value)
+        ) {
+            out[key] = JSON.stringify(value);
+        } else {
+            out[key] = value;
         }
     }
-
-    return { archivedOrders: totalArchivedOrders, archivedTransactions: totalArchivedTransactions };
+    return out;
 }
 
-let timerHandle: NodeJS.Timeout | null = null;
-let intervalHandle: NodeJS.Timeout | null = null;
+/**
+ * Move one region's prior-year rows hot -> archive. Returns per-table counts.
+ * Exported (without the lock) so tests can drive it deterministically.
+ */
+export async function archiveRegion(region: string, opts: ArchiveRunOptions = {}): Promise<ArchiveRunResult> {
+    const hot = db(region);
+    const archive = dbArchive(region);
+    const batchSize = opts.batchSize ?? env.archival.batchSize;
+    const maxRuntimeMs = opts.maxRuntimeMs ?? env.archival.maxRuntimeMin * 60_000;
+    const clock = opts.now ?? Date.now;
+    const startedAt = clock();
 
-export function msUntilNext0300UTC(from: Date = new Date()): number {
-    const next = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate(), 3, 0, 0, 0));
-    if (next.getTime() <= from.getTime()) {
-        next.setUTCDate(next.getUTCDate() + 1);
-    }
-    return next.getTime() - from.getTime();
-}
+    const moved: Record<string, number> = {};
+    let timedOut = false;
 
-export function startArchivalWorker(): { stop: () => void } {
-    const initialDelayMs = msUntilNext0300UTC();
-    logger.info("Cold archival worker scheduled", {
-        nextRunInMs: initialDelayMs,
-        scheduledAtUTC: new Date(Date.now() + initialDelayMs).toISOString(),
-    });
+    for (const { name, tsColumn } of ARCHIVAL_TABLES) {
+        moved[name] = 0;
 
-    timerHandle = setTimeout(() => {
-        runArchival().catch((err) => {
-            logger.error("Scheduled archival job failed", { error: err.message });
-        });
+        // Loop batches. Deleted rows drop out of the predicate, so the next
+        // `limit(batchSize)` always returns the next slice — no offset needed.
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            if (clock() - startedAt >= maxRuntimeMs) {
+                timedOut = true;
+                break;
+            }
 
-        // Run every 24 hours
-        intervalHandle = setInterval(() => {
-            runArchival().catch((err) => {
-                logger.error("Scheduled archival job failed", { error: err.message });
+            const rows: Record<string, unknown>[] = await hot(name)
+                .whereRaw(`?? < date_trunc('year', NOW())`, [tsColumn])
+                .orderBy("id")
+                .limit(batchSize);
+
+            if (rows.length === 0) break;
+
+            const ids = rows.map((r) => r.id as number | string);
+
+            // Archive first (commit), then delete from hot. ON CONFLICT DO
+            // NOTHING makes re-runs idempotent after a mid-batch crash.
+            await archive(name).insert(rows.map(serializeRowForInsert)).onConflict().ignore();
+            await hot(name).whereIn("id", ids).delete();
+
+            moved[name] += rows.length;
+            logger.info("archival batch moved", {
+                region,
+                table: name,
+                rows: rows.length,
+                tableTotal: moved[name],
             });
-        }, toMs.day(1));
-    }, initialDelayMs);
+        }
 
-    return {
-        stop: () => {
-            if (timerHandle) clearTimeout(timerHandle);
-            if (intervalHandle) clearInterval(intervalHandle);
-            logger.info("Cold archival worker stopped");
-        },
-    };
-}
+        if (timedOut) {
+            logger.warn("archival run hit max runtime; stopping mid-sweep", { region, table: name });
+            break;
+        }
+    }
 
-export function registerArchivalJobs(): void {
-    register({
-        name: "cold-archival",
-        cron: "0 3 * * *", // 03:00 UTC daily
-        timezone: "UTC",
-        handler: async () => {
-            await runArchival();
-        },
+    const totalMoved = Object.values(moved).reduce((sum, n) => sum + n, 0);
+    logger.info("archival run complete", {
+        region,
+        moved,
+        totalMoved,
+        timedOut,
+        ms: clock() - startedAt,
     });
+
+    return { region, moved, totalMoved, timedOut };
 }
 
+/**
+ * Acquire the per-region Redis lock, run the sweep, release. If the lock is
+ * already held (another worker process) we skip — the other run will finish
+ * the work. The lock TTL outlives a full run so it auto-expires after a crash.
+ */
+async function runArchivalWithLock(region: string): Promise<void> {
+    const lockKey = `archival:${region}:lock`;
+    const lockTtlSec = env.archival.maxRuntimeMin * 60 + 60;
+
+    const acquired = await cacheProvider.trySet(lockKey, String(Date.now()), lockTtlSec);
+    if (!acquired) {
+        logger.info("archival skipped; lock held by another process", { region });
+        return;
+    }
+
+    try {
+        await archiveRegion(region);
+    } finally {
+        await cacheProvider.del(lockKey);
+    }
+}
+
+/**
+ * Register one nightly archival job per configured region. Per-region jobs keep
+ * one slow region from blocking another's sweep.
+ */
+export function registerArchivalJobs(): void {
+    for (const region of env.regions) {
+        register({
+            name: `archival:${region}`,
+            cron: env.archival.cron,
+            timezone: "UTC",
+            handler: () => runArchivalWithLock(region),
+        });
+    }
+}

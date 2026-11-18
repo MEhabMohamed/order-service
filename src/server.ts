@@ -10,7 +10,6 @@ import { attachWsServer } from "./lib/websocket/ws-server";
 import { container } from "./lib/di/container";
 import { TOKENS } from "./lib/di/tokens";
 import { registerOrderModuleCoreEventHandlers } from "./app/order/core-events.handlers";
-import { startArchivalWorker } from "./lib/jobs/archival.worker";
 
 const app = createApp();
 const server = http.createServer(app);
@@ -40,17 +39,10 @@ server.listen(env.port, async () => {
         .catch((err) => {
             logger.warn("rabbitmq not reachable at boot — will retry", { err });
         });
-
-    archivalWorker = startArchivalWorker();
 });
-
-let archivalWorker: { stop: () => void } | undefined;
 
 async function shutdown() {
     logger.info("shutdown requested");
-    if (archivalWorker) {
-        archivalWorker.stop();
-    }
     server.close(async () => {
         try {
             await io.close();

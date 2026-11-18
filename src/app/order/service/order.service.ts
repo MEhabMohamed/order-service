@@ -3,7 +3,7 @@ import { injectable, inject } from "tsyringe";
 import { Server as IoServer } from "socket.io";
 import { container } from "../../../lib/di/container";
 import { TOKENS } from "../../../lib/di/tokens";
-import { db } from "../../../lib/knex/knex";
+import { db, dbArchive } from "../../../lib/knex/knex";
 import { assertRegion } from "../../../lib/sharding/regions";
 import { ICacheProvider } from "../../../pkg/cache/cache.interface";
 import { logger } from "../../../lib/logger/logger";
@@ -57,7 +57,7 @@ import {
 import { insertOutboxEvent } from "../../../lib/events/outbox.repo";
 import { EVENT_TYPES } from "../../../lib/events/event-types";
 
-const SERVICE_FEE = 10; // 10 EGP — paid to the platform.
+const SERVICE_FEE_MINOR = 1000; // 10.00 EGP / SAR — paid to the platform.
 
 const RESTAURANT_ORDERS_CACHE_PREFIX = (region: string, branchId: number) =>
     `${region}:GET:/api/restaurant/orders?branchId=${branchId}`;
@@ -103,9 +103,8 @@ export class OrderService {
 
         // 4. Money
         const subtotal = sumMinor(orderLineDrafts.map((l) => l.lineTotal));
-        const rawDeliveryFee = Number(branch.deliveryFee ?? 0);
-        const deliveryFee = rawDeliveryFee > 0 ? rawDeliveryFee : 10;
-        const total = subtotal + deliveryFee + SERVICE_FEE;
+        const deliveryFee = Number(branch.deliveryFee ?? 0);
+        const total = subtotal + deliveryFee + SERVICE_FEE_MINOR;
 
         // 5. Reserve stock FIRST. If anything below this point fails, we MUST release.
         // Reserve is atomic on the core side (FOR UPDATE + 409 on underflow) so we
@@ -142,7 +141,7 @@ export class OrderService {
                 status: body.paymentMethod === PaymentMethod.ONLINE ? OrderStatus.PENDING_PAYMENT : OrderStatus.PLACED,
                 subtotal,
                 deliveryFee,
-                serviceFee: SERVICE_FEE,
+                serviceFee: SERVICE_FEE_MINOR,
                 total,
                 currency: branch.currency as Currency,
                 paymentMethod: body.paymentMethod,
@@ -242,7 +241,11 @@ export class OrderService {
     async listCustomerOrders(actor: ActorContext, region: string, year: number, pagination: PaginationParams) {
         const yearStart = new Date(Date.UTC(year, 0, 1));
         const yearEnd = new Date(Date.UTC(year + 1, 0, 1));
-        const conn = db(region);
+        // Prior-year reads are served from the archive cluster (the nightly
+        // archival worker moves those rows off the hot DB). The current year
+        // always lives hot. We don't straddle: a single `year` is wholly hot
+        // or wholly archived.
+        const conn = year < new Date().getUTCFullYear() ? dbArchive(region) : db(region);
         const result = await findOrdersByCustomer({ customerId: actor.userId, yearStart, yearEnd }, pagination, conn);
         const counts = await countItemsByOrderIds(result.data.map((o) => o.id), conn);
         return {
